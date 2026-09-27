@@ -1,0 +1,148 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #87c5ff;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#game {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+}
+
+#crosshair {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  mix-blend-mode: difference;
+}
+#crosshair::before,
+#crosshair::after {
+  content: '';
+  position: absolute;
+  background: #fff;
+}
+#crosshair::before {
+  left: 8px;
+  top: 0;
+  width: 2px;
+  height: 18px;
+}
+#crosshair::after {
+  top: 8px;
+  left: 0;
+  width: 18px;
+  height: 2px;
+}
+
+#hud {
+  position: fixed;
+  top: max(8px, env(safe-area-inset-top));
+  left: max(8px, env(safe-area-inset-left));
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgb(0 0 0 / 0.35);
+  color: #fff;
+  font: 12px/1.3 ui-monospace, Menlo, monospace;
+  pointer-events: none;
+}
+
+/* ---- Touch controls (only shown on touch devices) ---- */
+#joystick,
+#jump-btn {
+  display: none;
+}
+
+body.touch #jump-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: fixed;
+  right: max(28px, env(safe-area-inset-right));
+  bottom: max(36px, env(safe-area-inset-bottom));
+  width: 72px;
+  height: 72px;
+  border: 2px solid rgb(255 255 255 / 0.7);
+  border-radius: 14px;
+  background: rgb(0 0 0 / 0.3);
+  color: #fff;
+  font-size: 28px;
+  touch-action: none;
+}
+body.touch #jump-btn.pressed {
+  background: rgb(255 255 255 / 0.35);
+}
+
+body.touch #joystick.active {
+  display: block;
+  position: fixed;
+  width: 110px;
+  height: 110px;
+  transform: translate(-50%, -50%);
+  border: 2px solid rgb(255 255 255 / 0.6);
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.2);
+  pointer-events: none;
+}
+#joystick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 48px;
+  height: 48px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.75);
+}
+
+/* ---- Start / pause overlay ---- */
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 0.45);
+  color: #fff;
+  text-align: center;
+  cursor: pointer;
+}
+#overlay.hidden {
+  display: none;
+}
+#overlay h1 {
+  margin: 0 0 12px;
+  font-size: 40px;
+  letter-spacing: 1px;
+  text-shadow: 3px 3px 0 #2b5a17;
+}
+#overlay p {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+#overlay p span {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 14px;
+  font-weight: 400;
+  opacity: 0.85;
+}

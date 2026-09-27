@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>Crazy Craft</title>
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+    <div id="crosshair"></div>
+    <div id="hud"></div>
+
+    <div id="joystick"><div id="joystick-knob"></div></div>
+    <button id="jump-btn" aria-label="Jump">▲</button>
+
+    <div id="overlay">
+      <div class="panel">
+        <h1>Crazy Craft</h1>
+        <p class="desktop-help">
+          Click to play<br />
+          <span>WASD move · Mouse look · Space jump · Shift sprint · Esc pause</span>
+        </p>
+        <p class="touch-help">
+          Tap to play<br />
+          <span>Left side: move (push all the way to sprint) · Right side: look · ▲ jump</span>
+        </p>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
