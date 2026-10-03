@@ -111,7 +111,14 @@ button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
 .moves small { font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
 .moves b { font-family: var(--display); font-size: 32px; line-height: 1; font-variant-numeric: tabular-nums; }
 .moves.low b { color: #ff7a7a; animation: bump .6s infinite; }
-.lvl-label { text-align: center; font-family: var(--display); font-size: 16px; color: var(--muted); letter-spacing: .06em; }
+.kingrow { display: flex; align-items: center; gap: 12px; }
+#king { width: 72px; height: 72px; flex: none; }
+.bubble { position: relative; flex: 1; min-width: 0; background: var(--cream); color: var(--ink); border-radius: 14px; padding: 6px 12px 7px; box-shadow: 0 3px 0 rgba(0,0,0,.3); font-weight: 800; font-size: 14px; line-height: 1.25; }
+.bubble::before { content: ''; position: absolute; left: -8px; top: 50%; margin-top: -8px; border: 8px solid transparent; border-left: 0; border-right-color: var(--cream); }
+.bubble small { display: block; font-family: var(--display); font-weight: 400; font-size: 13px; color: var(--gold-deep); letter-spacing: .04em; }
+.bubble.pop { animation: nudge .3s; }
+@keyframes nudge { 50% { transform: scale(1.04); } }
+@media (max-height: 640px) { #king { width: 52px; height: 52px; } .bubble { font-size: 12px; } }
 #boardWrap { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
 #board { touch-action: none; display: block; }
 .boosters { display: flex; justify-content: center; gap: 10px; padding-bottom: 4px; }
@@ -190,7 +197,10 @@ button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
       <div class="panel goals" id="goals"></div>
       <div class="panel moves" id="movesBox"><small>Moves</small><b id="moves">20</b></div>
     </header>
-    <div class="lvl-label" id="lvlLabel">Level 1</div>
+    <div class="kingrow">
+      <canvas id="king" width="160" height="160" aria-hidden="true"></canvas>
+      <div class="bubble"><small id="lvlLabel">Level 1</small><span id="kingText">Help me, hero!</span></div>
+    </div>
     <div id="boardWrap"><canvas id="board"></canvas></div>
     <div class="hint-line" id="hintLine"></div>
     <footer class="boosters" id="boosters"></footer>
@@ -283,7 +293,7 @@ function tween(o, to, dur, ease = easeOut) {
   return new Promise(res => {
     for (const tw of tweens) if (tw.o === o) for (const k in to) delete tw.to[k]; // newest tween wins a property
     const from = {}; for (const k in to) from[k] = o[k];
-    tweens.push({ o, from, to, dur: Math.max(1, dur), start: null, ease, res });
+    tweens.push({ o, from, to, dur: Math.max(1, dur), start: null, ease, res, g: G });
   });
 }
 function stepTweens(now) {
@@ -291,10 +301,12 @@ function stepTweens(now) {
     const tw = tweens[i]; if (tw.start === null) tw.start = now;
     const p = Math.min(1, (now - tw.start) / tw.dur), e = tw.ease(p);
     for (const k in tw.to) tw.o[k] = tw.from[k] + (tw.to[k] - tw.from[k]) * e;
-    if (p >= 1) { tweens.splice(i, 1); tw.res(); }
+    if (p >= 1) { tweens.splice(i, 1); if (tw.g === G) tw.res(); }
   }
 }
-const delay = ms => new Promise(r => setTimeout(r, ms));
+// Waits belong to the level that started them: if the player leaves or restarts, the old
+// level's pending animations never resume, so they can't touch the new board.
+const delay = ms => { const g = G; return new Promise(r => setTimeout(() => { if (g === G) r(); }, ms)); };
 const removeFrom = (arr, x) => { const i = arr.indexOf(x); if (i >= 0) arr.splice(i, 1); };
 
 /* =========================================================
@@ -302,7 +314,7 @@ const removeFrom = (arr, x) => { const i = arr.indexOf(x); if (i >= 0) arr.splic
    ========================================================= */
 function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 const F = '........';
-// layout legend: . tile   # hole   C crate   D double crate   S stone (2 hits)
+// layout legend: . tile   # hole   C crate   D double crate   S stone (2 hits)   I frozen tile
 const HAND = [
   { m: 20, k: 4, g: [[0, 12]], L: [F, F, F, F, F, F, F, F, F] },
   { m: 22, k: 4, g: [[1, 15], [2, 15]], L: ['#......#', F, F, F, F, F, F, F, '#......#'] },
@@ -314,6 +326,7 @@ const HAND = [
   { m: 25, k: 5, g: [[2, 20]], L: [F, F, F, F, F, F, F, 'CCCCCCCC', 'CCCCCCCC'] },
   { m: 28, k: 5, g: [[0, 22], [3, 22], [4, 14]], L: [F, F, '...##...', '..####..', '..####..', '...##...', F, F, F] },
   { m: 30, k: 5, g: [], L: ['SS....SS', 'S......S', F, '..DDDD..', '..DDDD..', F, 'C......C', 'CC....CC', 'CCC..CCC'] },
+  { m: 24, k: 4, g: [], L: [F, F, F, 'II....II', 'II....II', '..IIII..', '..IIII..', F, F] },
 ];
 const LEVEL_COUNT = 60;
 function genLevel(n) {
@@ -332,10 +345,14 @@ function genLevel(n) {
     const t = types[Math.floor(R() * types.length)];
     L[r][c] = t; L[r][7 - c] = t; placed += 2;
   }
+  if (n >= 12 && R() < .5) {
+    const wantIce = 6 + Math.floor(R() * 8); let ice = 0, t2 = 0;
+    while (ice < wantIce && t2++ < 200) { const r = Math.floor(R() * 9), c = Math.floor(R() * 4); if (L[r][c] !== '.') continue; L[r][c] = 'I'; L[r][7 - c] = 'I'; ice += 2; }
+  }
   const k = n < 13 ? 4 : 5;
   const g = [], nG = R() < .55 ? 1 : 2;
   while (g.length < nG) { const c = Math.floor(R() * k); if (!g.some(x => x[0] === c)) g.push([c, 14 + Math.floor(n * .35)]); }
-  let hpTot = 0; for (const row of L) for (const ch of row) hpTot += ch === 'C' ? 1 : (ch === 'D' || ch === 'S') ? 2 : 0;
+  let hpTot = 0; for (const row of L) for (const ch of row) hpTot += (ch === 'C' || ch === 'I') ? 1 : (ch === 'D' || ch === 'S') ? 2 : 0;
   const m = Math.max(20, Math.min(34, 16 + Math.round(hpTot * .32) + nG * 3 - Math.floor(n / 20)));
   return { m, k, g, L: L.map(r => r.join('')) };
 }
@@ -443,6 +460,13 @@ const DRAW = {
     for (const [x, y, r] of blobs) { g.beginPath(); g.arc(x, y, r, 0, 7); const gr = g.createRadialGradient(x - r * .4, y - r * .5, r * .1, x, y, r); gr.addColorStop(0, '#c4c9d6'); gr.addColorStop(1, '#6c7286'); g.fillStyle = gr; g.fill(); }
     g.beginPath(); g.moveTo(-.05, -.25); g.lineTo(.02, -.05); g.lineTo(-.06, .08); g.lineTo(.03, .3); g.strokeStyle = '#2b2e3d'; g.lineWidth = .03; g.stroke();
   },
+  ice(g) {
+    rr(g, -.46, -.46, .92, .92, .12); g.fillStyle = lg(g, -.46, -.46, .46, .46, [[0, 'rgba(230,250,255,.75)'], [.5, 'rgba(150,215,245,.45)'], [1, 'rgba(110,185,230,.7)']]); g.fill();
+    g.lineWidth = .05; g.strokeStyle = 'rgba(255,255,255,.95)'; g.stroke();
+    g.strokeStyle = 'rgba(255,255,255,.8)'; g.lineWidth = .035; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(-.34, -.1); g.lineTo(-.1, -.34); g.moveTo(-.34, .08); g.lineTo(.08, -.34); g.moveTo(.18, .34); g.lineTo(.34, .18); g.stroke();
+  },
+  iceGoal(g) { g.save(); g.scale(.85, .85); DRAW.k3(g); g.restore(); DRAW.ice(g); },
   star(g) {
     g.beginPath(); for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? .19 : .45; g.lineTo(Math.cos(a) * r, Math.sin(a) * r + .03); } g.closePath();
     g.fillStyle = lg(g, 0, -.45, 0, .45, [[0, '#fff3a6'], [.5, '#ffc53d'], [1, '#e88a00']]); g.fill(); g.lineWidth = .05; g.strokeStyle = '#8a4b00'; g.lineJoin = 'round'; g.stroke();
@@ -513,7 +537,7 @@ function sprite(key) {
   }
   return s;
 }
-const goalKey = goal => goal.type === 'color' ? 'k' + goal.c : goal.type === 'crate' ? 'crate1' : 'stone2';
+const goalKey = goal => goal.type === 'color' ? 'k' + goal.c : goal.type === 'crate' ? 'crate1' : goal.type === 'ice' ? 'iceGoal' : 'stone2';
 
 /* =========================================================
    Game state
@@ -538,26 +562,29 @@ const N4 = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 function startLevel(n) {
   const def = getLevel(n), rows = def.L.length, cols = def.L[0].length;
   const grid = [];
-  let crates = 0, stones = 0;
+  let crates = 0, stones = 0, ices = 0;
   for (let r = 0; r < rows; r++) {
     grid.push([]);
     for (let c = 0; c < cols; c++) {
-      const ch = def.L[r][c], cell = { hole: ch === '#', b: null, tile: null };
+      const ch = def.L[r][c], cell = { hole: ch === '#', b: null, tile: null, ice: 0 };
       if (ch === 'C' || ch === 'D') { cell.b = { t: 'crate', hp: ch === 'C' ? 1 : 2, v: { s: 1 } }; crates++; }
       if (ch === 'S') { cell.b = { t: 'stone', hp: 2, v: { s: 1 } }; stones++; }
+      if (ch === 'I') { cell.ice = 1; ices++; }
       grid[r].push(cell);
     }
   }
   const goals = def.g.map(([c, n]) => ({ type: 'color', c, left: n, shown: n }));
   if (crates) goals.push({ type: 'crate', left: crates, shown: crates });
   if (stones) goals.push({ type: 'stone', left: stones, shown: stones });
+  if (ices) goals.push({ type: 'ice', left: ices, shown: ices });
   G = { n, def, rows, cols, grid, goals, moves: def.m, busy: false, over: false, sel: null, booster: null,
-    dying: [], dyingB: [], fx: [], parts: [], pending: new Set(), claimed: new Set(), chain: 0, shake: 0, hint: null, cs: 40, ox: 6, oy: 6 };
+    dying: [], dyingB: [], dyingIce: [], fx: [], parts: [], pending: new Set(), claimed: new Set(), chain: 0, shake: 0, hint: null, cs: 40, ox: 6, oy: 6 };
   fillBoard();
   show('game');
   $('#lvlLabel').textContent = 'Level ' + n;
   buildGoals(); buildBoosters(); updateHud(); layout();
   scheduleHint();
+  KING.until = 0; kingSay(introLine(def), 'happy', 4500, 2);
 }
 
 function fillBoard() {
@@ -625,9 +652,10 @@ function decideSpecial(g) {
 }
 function spawnCell(g, pref) {
   const key = ([r, c]) => r * G.cols + c;
-  if (pref) for (const p of pref) if (g.cells.has(key(p))) return p;
+  if (pref) for (const p of pref) if (g.cells.has(key(p)) && !G.grid[p[0]][p[1]].ice) return p;
   let best = null, bestScore = -1;
   for (const cell of g.cells.values()) {
+    if (G.grid[cell[0]][cell[1]].ice) continue;
     const k = key(cell);
     let score = 0; for (const s of [...g.runs, ...g.squares]) if (s.cells.some(x => key(x) === k)) score += 2;
     score += cell[0] * .01;
@@ -639,7 +667,7 @@ function findMove() {
   for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) { const t = G.grid[r][c].tile; if (t && t.sp) return [[r, c]]; }
   for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) for (const [dr, dc] of [[0, 1], [1, 0]]) {
     const r2 = r + dr, c2 = c + dc; if (!playable(r, c) || !playable(r2, c2)) continue;
-    const A = G.grid[r][c], B = G.grid[r2][c2]; if (!A.tile || !B.tile || A.b || B.b) continue;
+    const A = G.grid[r][c], B = G.grid[r2][c2]; if (!A.tile || !B.tile || A.b || B.b || A.ice || B.ice) continue;
     [A.tile, B.tile] = [B.tile, A.tile];
     const ok = matchAt(r, c) || matchAt(r2, c2);
     [A.tile, B.tile] = [B.tile, A.tile];
@@ -670,6 +698,13 @@ function hitBlocker(r, c) {
     tween(d, { s: 1.3, a: 0 }, 220).then(() => removeFrom(G.dyingB, d));
   } else { b.v.s = 1.2; tween(b.v, { s: 1 }, 180, easeBack); }
 }
+function hitIce(r, c) {
+  const cell = G.grid[r][c]; if (!cell.ice) return;
+  cell.ice = 0; sfx.crack(); burst(r, c, '#d8f4ff', 8, true);
+  const goal = goalFor('ice'); if (goal) { goal.left--; flyToGoal(goal, r, c); }
+  const d = { r, c, s: 1, a: 1 }; G.dyingIce.push(d);
+  tween(d, { s: 1.3, a: 0 }, 220).then(() => removeFrom(G.dyingIce, d));
+}
 function track(p) { G.pending.add(p); p.finally(() => G.pending.delete(p)); return p; }
 async function flush() { while (G.pending.size) await Promise.all([...G.pending]); }
 function hitCell(r, c, ctx) {
@@ -678,6 +713,7 @@ function hitCell(r, c, ctx) {
   if (ctx.seen.has(key)) return; ctx.seen.add(key);
   const cell = G.grid[r][c];
   if (cell.b) { hitBlocker(r, c); return; }
+  if (cell.ice) { hitIce(r, c); return; }
   const t = cell.tile; if (!t) return;
   if (t.sp) { cell.tile = null; track(fire(r, c, t)); return; }
   clearTile(r, c);
@@ -732,6 +768,7 @@ function pickTarget(exclude) {
     const key = r * G.cols + c, cell = G.grid[r][c];
     if (cell.hole || exclude.has(key) || G.claimed.has(key)) continue;
     if (cell.b) (goalFor(cell.b.t) ? prim : sec).push([r, c]);
+    else if (cell.ice) (goalFor('ice') ? prim : sec).push([r, c]);
     else if (cell.tile && !cell.tile.sp) (goalFor('color', cell.tile.k) ? prim : sec).push([r, c]);
   }
   const pool = prim.length ? prim : sec;
@@ -772,6 +809,7 @@ async function ballConvert(r, c, other) {
   for (let y = 0; y < G.rows; y++) for (let x = 0; x < G.cols; x++) if (kindAt(y, x) === color) targets.push([y, x]);
   G.fx.push(boltFx(r, c, targets, KIND[color].c));
   for (const [y, x] of targets) {
+    if (G.grid[y][x].ice) { hitIce(y, x); continue; }
     const t = G.grid[y][x].tile; t.sp = other === 'rh' || other === 'rv' ? (Math.random() < .5 ? 'rh' : 'rv') : other; t.k = -1; t.s = .3; tween(t, { s: 1 }, 260, easeBack);
   }
   await delay(500);
@@ -797,6 +835,7 @@ function useMove() { G.moves--; updateHud(); }
 async function trySwap(r1, c1, r2, c2) {
   if (G.busy || G.over || !playable(r2, c2)) return;
   const A = G.grid[r1][c1], B = G.grid[r2][c2];
+  if (A.ice || B.ice) { sfx.bad(); kingSay("That one's frozen! Match it where it is to crack the ice.", 'worried', 2600, 1); return; }
   if (!A.tile || !B.tile || A.b || B.b) return;
   G.busy = true; G.sel = null; clearHint();
   const ta = A.tile, tb = B.tile;
@@ -807,7 +846,7 @@ async function trySwap(r1, c1, r2, c2) {
   if (!ta.sp && !tb.sp) {
     const groups = findMatches();
     if (!groups.length) {
-      sfx.bad();
+      sfx.bad(); kingSay('Hmm, that doesn\u2019t make a match.', 'worried', 1500, 1);
       await Promise.all([tween(ta, { x: c1, y: r1 }, 150, easeIO), tween(tb, { x: c2, y: r2 }, 150, easeIO)]);
       A.tile = ta; B.tile = tb; G.busy = false; scheduleHint(); return;
     }
@@ -824,7 +863,7 @@ async function combo(rB, cB, ta, rA, cA, tb) {
   const sa = ta.sp, sb = tb.sp, isR = s => s === 'rh' || s === 'rv';
   if (sa && sb) {
     G.grid[rB][cB].tile = null; G.grid[rA][cA].tile = null;
-    tween(tb, { x: cB, y: rB }, 120); sfx.special();
+    tween(tb, { x: cB, y: rB }, 120); sfx.special(); kingSay('Spectacular combo!', 'cheer', 1800, 1);
     await delay(120);
     const has = s => sa === s || sb === s;
     if (sa === 'ball' && sb === 'ball') { consume(tb); await fire(rB, cB, ta, { type: 'all' }); }
@@ -851,19 +890,19 @@ async function resolveGroups(groups, pref) {
   G.chain++; sfx.pop(G.chain);
   const spawns = [], hits = new Map();
   for (const g of groups) {
-    const sp = decideSpecial(g), target = sp ? spawnCell(g, pref) : null;
+    const want = decideSpecial(g), target = want ? spawnCell(g, pref) : null, sp = target ? want : null;
     if (sp) spawns.push({ r: target[0], c: target[1], sp });
     for (const [r, c] of g.cells.values()) {
-      clearTile(r, c, target);
+      if (G.grid[r][c].ice) hitIce(r, c); else clearTile(r, c, target);
       for (const [dr, dc] of N4) { const y = r + dr, x = c + dc; if (playable(y, x) && G.grid[y][x].b) hits.set(y * G.cols + x, [y, x]); }
     }
   }
   hits.forEach(([y, x]) => hitBlocker(y, x));
-  if (G.chain >= 3 && G.chain <= 5) banner(['', '', '', 'Great!', 'Royal!', 'Majestic!'][G.chain]);
+  if (G.chain >= 3 && G.chain <= 5) { const w = ['Great!', 'Royal!', 'Majestic!'][G.chain - 3]; banner(w); kingSay(w, 'cheer', 1400); }
   if (spawns.length) {
     await delay(150);
     for (const s of spawns) { const t = newTile(-1, s.r, s.c); t.sp = s.sp; t.s = 0; G.grid[s.r][s.c].tile = t; tween(t, { s: 1 }, 260, easeBack); }
-    sfx.special();
+    sfx.special(); kingTipFor(spawns[0].sp);
   }
   await delay(spawns.length ? 120 : 210);
 }
@@ -884,7 +923,7 @@ function gravity() {
     let seg = [], spawnY = -1;
     for (let r = G.rows - 1; r >= -1; r--) {
       const cell = r >= 0 ? G.grid[r][c] : null;
-      if (r === -1 || cell.b) {
+      if (r === -1 || cell.b || cell.ice) {
         const tiles = [];
         for (const y of seg) { const t = G.grid[y][c].tile; if (t) { tiles.push(t); G.grid[y][c].tile = null; } }
         seg.forEach((y, i) => {
@@ -909,11 +948,11 @@ function diagonal() {
   for (let r = G.rows - 1; r >= 1; r--) for (let c = 0; c < G.cols; c++) {
     const cell = G.grid[r][c]; if (cell.hole || cell.b || cell.tile) continue;
     let ra = r - 1; while (ra >= 0 && G.grid[ra][c].hole) ra--;
-    if (ra < 0 || !G.grid[ra][c].b) continue;
+    if (ra < 0 || !(G.grid[ra][c].b || G.grid[ra][c].ice)) continue;
     for (const dc of Math.random() < .5 ? [-1, 1] : [1, -1]) {
       const cc = c + dc; if (cc < 0 || cc >= G.cols) continue;
       const src = G.grid[r - 1][cc], key = (r - 1) * G.cols + cc;
-      if (src.hole || src.b || !src.tile || used.has(key)) continue;
+      if (src.hole || src.b || src.ice || !src.tile || used.has(key)) continue;
       const below = G.grid[r][cc]; if (!below.hole && !below.b && !below.tile) continue;
       used.add(key); cell.tile = src.tile; src.tile = null; mv.push({ t: cell.tile, r, c }); break;
     }
@@ -936,14 +975,14 @@ const goalsDone = () => G.goals.every(g => g.left <= 0);
 async function endTurn() {
   updateHud();
   if (goalsDone()) { await winFlow(); return; }
-  if (G.moves <= 0) { await delay(400); G.over = true; G.busy = false; sfx.lose(); showLose(); return; }
+  if (G.moves <= 0) { await delay(400); G.over = true; G.busy = false; sfx.lose(); kingSay('Oh no\u2026 we were so close!', 'sad', 1e9, 3); showLose(); return; }
   if (!findMove()) await shuffleBoard();
   G.busy = false; scheduleHint();
 }
 async function shuffleBoard() {
   banner('Shuffle!'); await delay(400);
   const cells = [];
-  for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) { const t = G.grid[r][c].tile; if (t && !t.sp && !G.grid[r][c].b) cells.push(t); }
+  for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) { const t = G.grid[r][c].tile; if (t && !t.sp && !G.grid[r][c].b && !G.grid[r][c].ice) cells.push(t); }
   await Promise.all(cells.map(t => tween(t, { s: .2 }, 200, easeIn)));
   const kinds = cells.map(t => t.k);
   let ok = false;
@@ -957,7 +996,7 @@ async function shuffleBoard() {
   if (findMatches().length) await cascade();
 }
 async function winFlow() {
-  G.over = true;
+  G.over = true; kingSay('Hooray! You did it, hero!', 'cheer', 1e9, 3);
   const left = G.moves, m = G.def.m;
   const stars = left >= Math.ceil(m * .28) ? 3 : left >= Math.ceil(m * .1) ? 2 : 1;
   await delay(250); sfx.win(); banner('Level Complete!'); await delay(1100);
@@ -966,7 +1005,7 @@ async function winFlow() {
     const n = Math.min(left, 12);
     for (let i = 0; i < n; i++) {
       const pool = [];
-      for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) { const t = G.grid[r][c].tile; if (t && !t.sp) pool.push(t); }
+      for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) { const t = G.grid[r][c].tile; if (t && !t.sp && !G.grid[r][c].ice) pool.push(t); }
       if (!pool.length) break;
       const t = pool[Math.floor(Math.random() * pool.length)];
       t.sp = Math.random() < .5 ? 'rh' : 'rv'; t.k = -1; t.s = .3; tween(t, { s: 1 }, 220, easeBack);
@@ -1118,6 +1157,109 @@ function banner(text) {
   const el = $('#banner'); el.textContent = text; el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
 }
 
+
+/* =========================================================
+   The King: drawn character who reacts and gives tips
+   ========================================================= */
+function drawKing(g, mood, now) {
+  const skin = '#f6c79f';
+  const bob = mood === 'cheer' ? -Math.abs(Math.sin(now / 140)) * .06 : Math.sin(now / 500) * .012;
+  g.save(); g.translate(0, bob);
+  g.lineJoin = 'round'; g.lineCap = 'round';
+  // robe
+  g.beginPath(); g.moveTo(-.36, .5); g.quadraticCurveTo(-.34, .12, -.18, .08); g.lineTo(.18, .08); g.quadraticCurveTo(.34, .12, .36, .5); g.closePath();
+  g.fillStyle = lg(g, -.36, 0, .36, 0, [[0, '#a3162a'], [.5, '#e23a4b'], [1, '#8a0f1f']]); g.fill(); g.lineWidth = .025; g.strokeStyle = '#5a0a14'; g.stroke();
+  g.fillStyle = '#fff'; g.fillRect(-.045, .14, .09, .36);
+  g.beginPath(); g.ellipse(0, .12, .23, .075, 0, 0, 7); g.fill(); g.stroke();
+  g.fillStyle = '#1b1532'; for (const [x, y] of [[-.13, .12], [.11, .13], [-.03, .1], [0, .26], [0, .4]]) { g.beginPath(); g.arc(x, y, .013, 0, 7); g.fill(); }
+  // arms
+  g.fillStyle = skin;
+  if (mood === 'cheer') {
+    for (const sd of [-1, 1]) { g.strokeStyle = '#c22437'; g.lineWidth = .09; g.beginPath(); g.moveTo(sd * .24, .22); g.lineTo(sd * .37, -.06); g.stroke(); g.beginPath(); g.arc(sd * .38, -.11, .05, 0, 7); g.fill(); }
+  } else {
+    const hy = mood === 'worried' ? -.04 : mood === 'sad' ? .4 : .34, hx = mood === 'worried' ? .21 : .27;
+    for (const sd of [-1, 1]) { g.beginPath(); g.arc(sd * hx, hy, .05, 0, 7); g.fill(); g.lineWidth = .015; g.strokeStyle = '#a0704a'; g.stroke(); }
+  }
+  // head
+  g.fillStyle = skin; g.beginPath(); g.arc(0, -.12, .19, 0, 7); g.fill(); g.lineWidth = .02; g.strokeStyle = '#a0704a'; g.stroke();
+  g.fillStyle = 'rgba(240,110,110,.35)'; for (const sd of [-1, 1]) { g.beginPath(); g.arc(sd * .12, -.07, .035, 0, 7); g.fill(); }
+  // beard
+  g.fillStyle = '#9a6a3a'; g.beginPath(); g.moveTo(-.19, -.12); g.quadraticCurveTo(-.21, .13, 0, .17); g.quadraticCurveTo(.21, .13, .19, -.12);
+  g.quadraticCurveTo(.12, -.01, 0, -.02); g.quadraticCurveTo(-.12, -.01, -.19, -.12); g.fill();
+  // mouth
+  g.fillStyle = '#5a1a1a'; g.strokeStyle = '#5a1a1a'; g.lineWidth = .02;
+  if (mood === 'happy' || mood === 'cheer') { g.beginPath(); g.ellipse(0, .035, .06, mood === 'cheer' ? .055 : .035, 0, 0, Math.PI); g.fill(); }
+  else if (mood === 'worried') { g.beginPath(); g.arc(0, .055, .025, 0, 7); g.fill(); }
+  else if (mood === 'sad') { g.beginPath(); g.arc(0, .1, .05, Math.PI * 1.15, Math.PI * 1.85); g.stroke(); }
+  else { g.beginPath(); g.arc(0, 0, .05, .2 * Math.PI, .8 * Math.PI); g.stroke(); }
+  // mustache + nose
+  g.fillStyle = '#7a4f28'; for (const sd of [-1, 1]) { g.beginPath(); g.ellipse(sd * .06, -.035, .07, .028, sd * .3, 0, 7); g.fill(); }
+  g.fillStyle = '#e8a57c'; g.beginPath(); g.arc(0, -.075, .035, 0, 7); g.fill();
+  // eyes + brows
+  const blink = now % 3400 < 120;
+  for (const sd of [-1, 1]) {
+    const x = sd * .07, y = -.15;
+    g.strokeStyle = '#2b1a10'; g.lineWidth = .02;
+    if (blink) { g.beginPath(); g.moveTo(x - .03, y); g.lineTo(x + .03, y); g.stroke(); }
+    else if (mood === 'happy' || mood === 'cheer') { g.beginPath(); g.arc(x, y + .015, .03, Math.PI * 1.15, Math.PI * 1.85); g.stroke(); }
+    else { g.fillStyle = '#fff'; g.beginPath(); g.arc(x, y, .033, 0, 7); g.fill(); g.fillStyle = '#2b1a10'; g.beginPath(); g.arc(x + sd * -.005, y + .005, .018, 0, 7); g.fill(); }
+    const up = mood === 'worried' || mood === 'sad';
+    g.strokeStyle = '#7a4f28'; g.lineWidth = .025; g.beginPath();
+    g.moveTo(sd * .03, up ? -.225 : -.2); g.lineTo(sd * .11, up ? -.19 : -.205); g.stroke();
+  }
+  // crown
+  poly(g, [[-.15, -.25], [-.17, -.41], [-.08, -.32], [0, -.44], [.08, -.32], [.17, -.41], [.15, -.25]]);
+  g.fillStyle = lg(g, 0, -.44, 0, -.25, [[0, '#fff09a'], [1, '#e79a12']]); g.fill(); g.lineWidth = .02; g.strokeStyle = '#7a4300'; g.stroke();
+  g.fillStyle = '#e8343f'; g.beginPath(); g.arc(0, -.3, .025, 0, 7); g.fill();
+  g.restore();
+}
+const KING = { mood: 'idle', until: 0, prio: 0 };
+const kingCanvas = $('#king'), kingCtx = kingCanvas.getContext('2d');
+function setKingText(text, pop) {
+  const el = $('#kingText'); if (el.textContent === text) return;
+  el.textContent = text;
+  if (pop) { const b = el.parentElement; b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); }
+}
+// prio: 0 cheer, 1 reaction, 2 tip, 3 end of level. A lower-priority line never interrupts a higher one still showing.
+function kingSay(text, mood = 'happy', ms = 2200, prio = 0) {
+  const now = performance.now();
+  if (now < KING.until && prio < KING.prio) return;
+  KING.mood = mood; KING.until = now + ms; KING.prio = prio;
+  setKingText(text, true);
+}
+const GOAL_NAMES = { crate: 'crates', stone: 'stones', ice: 'ice blocks' };
+function kingIdle() {
+  if (G.moves <= 5 && !G.over) return { mood: 'worried', text: G.moves === 1 ? 'Last move! Make it count!' : `Only ${G.moves} moves left!` };
+  const left = G.goals.filter(g => g.left > 0).map(g => `${g.left} ${g.type === 'color' ? KIND[g.c].name : GOAL_NAMES[g.type]}`);
+  return { mood: 'idle', text: left.length ? 'Still needed: ' + left.join(', ') + '.' : 'Nearly there!' };
+}
+function renderKing(now) {
+  if (now > KING.until) { const idle = kingIdle(); KING.mood = idle.mood; KING.prio = 0; setKingText(idle.text, false); }
+  const g = kingCtx; g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, 160, 160);
+  g.translate(80, 86); g.scale(148, 148); drawKing(g, KING.mood, now);
+}
+function introLine(def) {
+  const all = def.L.join('');
+  if (all.includes('I')) return 'Brrr, ice! Frozen pieces can’t move. Match them where they sit to break them free.';
+  if (all.includes('S')) return 'Stones take two hits. Power-ups smash them fastest!';
+  if (all.includes('C') || all.includes('D')) return 'Crates in the way! Make matches right next to them to smash them.';
+  return 'Help me rebuild my castle! Match 3 or more to collect the goals.';
+}
+const TIPS = {
+  rh: 'A rocket! Tap it, or swap it, to blast a whole line.',
+  tnt: 'TNT! Tap it to blow up everything around it.',
+  prop: 'A propeller! It flies straight to a piece you still need.',
+  ball: 'A light ball! Swap it with any piece to clear that whole color.',
+};
+function kingTipFor(sp) {
+  S.tips = S.tips || {};
+  const key = sp === 'rv' ? 'rh' : sp;
+  if (!S.tips[key]) { S.tips[key] = 1; save(); kingSay(TIPS[key], 'happy', 4500, 2); return; }
+  let specials = 0; for (const row of G.grid) for (const cell of row) if (cell.tile && cell.tile.sp) specials++;
+  if (specials >= 2 && !S.tips.combo) { S.tips.combo = 1; save(); kingSay('Psst! Swap two power-ups into each other for a giant combo.', 'happy', 4500, 2); return; }
+  kingSay(['Splendid!', 'Marvellous!', 'Jolly good!'][Math.floor(Math.random() * 3)], 'happy', 1300);
+}
+
 /* =========================================================
    Rendering
    ========================================================= */
@@ -1175,6 +1317,8 @@ function renderBoard(now, dt) {
     drawTile(g, t, now, sc, ox, oy);
   }
   for (const t of G.dying) drawTile(g, t, now);
+  for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) if (G.grid[r][c].ice) { const s = cs * .98; g.drawImage(sprite('ice'), px(c) - s / 2, py(r) - s / 2, s, s); }
+  for (const d of G.dyingIce) { const s = cs * .98 * d.s; g.globalAlpha = Math.max(0, d.a); g.drawImage(sprite('ice'), px(d.c) - s / 2, py(d.r) - s / 2, s, s); g.globalAlpha = 1; }
   for (let i = G.parts.length - 1; i >= 0; i--) {
     const p = G.parts[i]; p.life += dt;
     if (p.life > p.max) { G.parts.splice(i, 1); continue; }
@@ -1209,7 +1353,7 @@ function renderFx(now) {
 function frame(now) {
   const dt = Math.min(50, now - lastNow); lastNow = now;
   stepTweens(now);
-  if (G && !$('#game').hidden) renderBoard(now, dt);
+  if (G && !$('#game').hidden) { renderBoard(now, dt); renderKing(now); }
   renderFx(now);
   requestAnimationFrame(frame);
 }
@@ -1291,8 +1435,8 @@ function goalIconsHtml(goals) { return `<div class="goalrow">${goals.map((g, i) 
 function fillGoalIcons(card, goals) { goals.forEach((g, i) => drawIcon(card.querySelector(`[data-mi="${i}"] canvas`), g.key)); }
 function levelGoals(n) {
   const def = getLevel(n); const out = def.g.map(([c, k]) => ({ key: 'k' + c, n: k }));
-  let cr = 0, st = 0; for (const row of def.L) for (const ch of row) { if (ch === 'C' || ch === 'D') cr++; if (ch === 'S') st++; }
-  if (cr) out.push({ key: 'crate1', n: cr }); if (st) out.push({ key: 'stone2', n: st });
+  let cr = 0, st = 0, ic = 0; for (const row of def.L) for (const ch of row) { if (ch === 'C' || ch === 'D') cr++; if (ch === 'S') st++; if (ch === 'I') ic++; }
+  if (cr) out.push({ key: 'crate1', n: cr }); if (st) out.push({ key: 'stone2', n: st }); if (ic) out.push({ key: 'iceGoal', n: ic });
   return { def, goals: out };
 }
 function openLevel(n) {
@@ -1318,7 +1462,7 @@ function showLose() {
     <div class="row"><button class="btn blue" data-a="more" ${S.coins < cost ? 'disabled' : ''}>+5 moves · ${cost} coins</button></div>
     <div class="row"><button class="btn ghost" data-a="map">Map</button><button class="btn green" data-a="retry">Retry</button></div>`);
   fillGoalIcons(card, goals);
-  card.querySelector('[data-a=more]').onclick = () => { if (S.coins < cost) return; S.coins -= cost; save(); sfx.coin(); G.moves += 5; G.over = false; updateHud(); closeModal(); scheduleHint(); };
+  card.querySelector('[data-a=more]').onclick = () => { if (S.coins < cost) return; S.coins -= cost; save(); sfx.coin(); G.moves += 5; G.over = false; updateHud(); closeModal(); scheduleHint(); KING.until = 0; kingSay('Five more moves! We can do this!', 'happy', 2000, 1); };
   card.querySelector('[data-a=map]').onclick = () => { closeModal(); toMap(); };
   card.querySelector('[data-a=retry]').onclick = () => { closeModal(); startLevel(G.n); };
 }
@@ -1407,6 +1551,9 @@ function drawScene() {
   const done = S.tasks[viewArea] || [], keys = AREAS[viewArea].tasks.map(t => t[0]);
   const item = (key, fn) => { const on = done[keys.indexOf(key)]; g.save(); g.globalAlpha = on ? 1 : .16; fn(); g.restore(); };
   SCENES[viewArea](g, item);
+  const built = done.filter(Boolean).length;
+  g.save(); g.translate(viewArea === 0 ? 96 : 112, 152); g.scale(68, 68);
+  drawKing(g, areaDone(viewArea) ? 'cheer' : built ? 'happy' : 'worried', 500); g.restore();
 }
 const SCENES = [
   (g, item) => {
