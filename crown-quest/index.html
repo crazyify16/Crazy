@@ -1039,40 +1039,59 @@ function hitCell(r, c, ctx) {
   if (cell.b) { hitBlocker(r, c); return; }
   if (cell.ice) { hitIce(r, c); return; }
   const t = cell.tile; if (!t) return;
-  if (t.sp) { cell.tile = null; track(fire(r, c, t)); return; }
+  if (t.sp) { cell.tile = null; track(fire(r, c, t, { chained: true })); return; }
   clearTile(r, c);
 }
 
 /* ---------- power-ups ---------- */
 async function fire(r, c, t, opt = {}) {
   const type = opt.type || t.sp;
-  if (!G.dying.includes(t)) { G.dying.push(t); tween(t, { s: 1.5, a: 0 }, 220).then(() => removeFrom(G.dying, t)); }
+  const big = ['cross', 'cross3', 'all', 'prop3'].includes(type) || opt.radius > 2;
+  if (!G.dying.includes(t)) {
+    // wind-up: the power-up shakes, swells and glows for a beat before it goes off
+    G.dying.push(t);
+    const ms = opt.chained ? 70 : big ? 280 : type === 'ball' ? 240 : type === 'tnt' ? 210 : 140;
+    await windUp(r, c, t, ms, type);
+    tween(t, { s: 1.7, a: 0 }, 160).then(() => removeFrom(G.dying, t));
+  }
+  if (big) { G.zoom = .05 * JUICE; G.flash = Math.max(G.flash || 0, .3 * JUICE); G.fx.push(shockFx(r, c, 4, '#ffffff')); }
   const ctx = { seen: new Set([r * G.cols + c]) };
   switch (type) {
     case 'rh': return rocketLine(r, c, 'h', ctx);
     case 'rv': return rocketLine(r, c, 'v', ctx);
-    case 'cross': return Promise.all([rocketLine(r, c, 'h', ctx), rocketLine(r, c, 'v', ctx)]);
+    case 'cross': return Promise.all([rocketLine(r, c, 'h', ctx, 1.5), rocketLine(r, c, 'v', ctx, 1.5)]);
     case 'cross3': {
       const ps = [];
       for (let d = -1; d <= 1; d++) { hitCell(r + d, c, ctx); hitCell(r, c + d, ctx); }
-      for (let d = -1; d <= 1; d++) { if (r + d >= 0 && r + d < G.rows) ps.push(rocketLine(r + d, c, 'h', ctx)); if (c + d >= 0 && c + d < G.cols) ps.push(rocketLine(r, c + d, 'v', ctx)); }
+      for (let d = -1; d <= 1; d++) { if (r + d >= 0 && r + d < G.rows) ps.push(rocketLine(r + d, c, 'h', ctx, d ? 1 : 1.8)); if (c + d >= 0 && c + d < G.cols) ps.push(rocketLine(r, c + d, 'v', ctx, d ? 1 : 1.8)); }
       return Promise.all(ps);
     }
     case 'tnt': return explode(r, c, opt.radius || 2, ctx);
     case 'prop': return propeller(r, c, ctx, opt.carry);
-    case 'prop3': { for (const [dr, dc] of N4) hitCell(r + dr, c + dc, ctx); return Promise.all([0, 1, 2].map(i => delay(i * 90).then(() => propeller(r, c, ctx, null, true)))); }
+    case 'prop3': { for (const [dr, dc] of N4) hitCell(r + dr, c + dc, ctx); return Promise.all([0, 1, 2].map(i => delay(i * 110).then(() => propeller(r, c, ctx, null, true)))); }
     case 'ball': return lightBall(r, c, opt.color, ctx);
     case 'all': return clearAll(r, c, ctx);
   }
 }
-async function rocketLine(r, c, dir, ctx) {
+const CHARGE_COLOR = { tnt: '#ff7a2e', ball: '#ffffff', all: '#ffffff', prop: '#7fc4ff', prop3: '#7fc4ff' };
+async function windUp(r, c, t, ms, type) {
+  t.flash = 0; t.held = true;
+  tween(t, { s: 1.32, flash: .85 }, ms, easeIn);
+  G.fx.push(chargeFx(r, c, ms, CHARGE_COLOR[type] || '#ffd84d'));
+  const iv = setInterval(() => { t.ox = (Math.random() - .5) * .09; t.oy = (Math.random() - .5) * .09; }, 16);
+  await delay(ms);
+  clearInterval(iv); t.ox = t.oy = 0; t.held = false;
+}
+async function rocketLine(r, c, dir, ctx, wide = 1) {
   sfx.rocket((c / Math.max(1, G.cols - 1) * 2 - 1) * .6);
   const n = dir === 'h' ? G.cols : G.rows, step = 30;
-  G.fx.push(rocketFx(r, c, dir));
+  G.fx.push(rocketFx(r, c, dir, wide));
   const ps = [];
   for (let d = 1; d < n; d++) {
     const cells = dir === 'h' ? [[r, c - d], [r, c + d]] : [[r - d, c], [r + d, c]];
     ps.push(delay(d * step).then(() => cells.forEach(([a, b]) => {
+      if (!playable(a, b)) return;
+      cellFlash(a, b, '#fff1b0');
       hitCell(a, b, ctx);
       // tiles beside the rocket's path get blown sideways as it passes
       if (dir === 'h') { kick(at(a - 1, b), 0, -3.5); kick(at(a + 1, b), 0, 3.5); }
@@ -1083,13 +1102,19 @@ async function rocketLine(r, c, dir, ctx) {
 }
 function at(r, c) { return inB(r, c) ? G.grid[r][c].tile : null; }
 async function explode(r, c, R, ctx) {
-  sfx.boom(); G.shake = (8 + R * 3) * JUICE; G.flash = Math.max(G.flash || 0, .35 * JUICE);
-  G.fx.push(ringFx(r, c, R)); shove(r, c, 7, R + 2.5);
-  burst(r, c, '#ffb02e', 14, 'star'); burst(r, c, '#ff5a36', 10);
+  sfx.boom(); G.shake = (9 + R * 3.5) * JUICE; G.flash = Math.max(G.flash || 0, (.24 + R * .04) * JUICE);
+  if (R > 2) G.zoom = .06 * JUICE;
+  G.fx.push(fireballFx(r, c, R)); G.fx.push(shockFx(r, c, R + 1.8, '#fff6d8')); G.fx.push(shockFx(r, c, R + 3, '#ffb36b', 120));
+  shove(r, c, 8, R + 2.5);
+  const x = px(c), y = py(r);
+  emit(x, y, { kind: 'fire', n: 24 + R * 6, speed: .38 * R, size: .55, life: 520, color: ['#fff3a0', '#ffc23d', '#ff7a20', '#ff4a20'] });
+  emit(x, y, { kind: 'smoke', n: 12 + R * 4, speed: .14 * R, size: .55, life: 1400, color: ['#5b5566', '#77707f', '#45404f'] });
+  emit(x, y, { kind: 'spark', n: 20 + R * 5, speed: .7 * R, size: .05, life: 480, color: ['#fff7c0', '#ffd24d', '#ffffff'] });
+  emit(x, y, { kind: 'chip', n: 10, speed: .5 * R, size: .13, life: 850, color: ['#3a2a2a', '#7a4a22', '#555a73'] });
   const ps = [];
   for (let dr = -R; dr <= R; dr++) for (let dc = -R; dc <= R; dc++) {
     const d = Math.max(Math.abs(dr), Math.abs(dc));
-    ps.push(delay(d * 40).then(() => hitCell(r + dr, c + dc, ctx)));
+    ps.push(delay(d * 45).then(() => { if (playable(r + dr, c + dc)) cellFlash(r + dr, c + dc, '#ffd08a'); hitCell(r + dr, c + dc, ctx); }));
   }
   await Promise.all(ps);
 }
@@ -1112,6 +1137,11 @@ async function propeller(r, c, ctx, carry, skipNeighbors) {
   sfx.whoosh();
   await flyPropFx(r, c, tgt[0], tgt[1], carry);
   G.claimed.delete(key);
+  // dive-bomb impact
+  G.shake = Math.max(G.shake, 4 * JUICE); cellFlash(tgt[0], tgt[1], '#bfe3ff');
+  G.fx.push(shockFx(tgt[0], tgt[1], 1.3, '#bfe3ff'));
+  emit(px(tgt[1]), py(tgt[0]), { kind: 'spark', n: 12, speed: .5, size: .05, life: 380, color: ['#ffffff', '#9fd8ff'] });
+  emit(px(tgt[1]), py(tgt[0]), { kind: 'smoke', n: 5, speed: .12, size: .4, life: 700, color: ['#c9d3ea', '#9aa6c4'] });
   if (carry) {
     hitCell(tgt[0], tgt[1], { seen: new Set() });
     const ghost = newTile(-1, tgt[0], tgt[1]); ghost.sp = carry;
@@ -1125,37 +1155,51 @@ function mostCommonColor() {
   if (wanted.length) return wanted.sort((a, b) => count[b] - count[a])[0];
   return count.indexOf(Math.max(...count));
 }
+function targetsOf(color, r, c) {
+  const out = [];
+  for (let y = 0; y < G.rows; y++) for (let x = 0; x < G.cols; x++) if (kindAt(y, x) === color) out.push([y, x]);
+  return out.sort((a, b) => Math.hypot(a[0] - r, a[1] - c) - Math.hypot(b[0] - r, b[1] - c)); // nearest first, like a wave
+}
+// Lightning leaps from the orb to each target in turn; each target sparks, then pops.
+function zapTo(r, c, y, x, color, i) {
+  return delay(i * 38).then(() => {
+    G.fx.push(boltFx(r, c, y, x, color));
+    const t = at(y, x); if (t) { t.flash = 1; tween(t, { flash: .3 }, 120); kick(t, 0, -2, 3); }
+    cellFlash(y, x, '#ffffff');
+    return delay(140);
+  }).then(() => emit(px(x), py(y), { kind: 'spark', n: 6, speed: .4, size: .045, life: 320, color: ['#ffffff', color] }));
+}
 async function lightBall(r, c, color, ctx) {
   if (color == null || color < 0) color = mostCommonColor();
   sfx.zap();
-  const targets = [];
-  for (let y = 0; y < G.rows; y++) for (let x = 0; x < G.cols; x++) if (kindAt(y, x) === color) targets.push([y, x]);
-  G.fx.push(boltFx(r, c, targets, KIND[color].c));
-  await delay(250);
-  await Promise.all(targets.map(([y, x], i) => delay(i * 22).then(() => hitCell(y, x, ctx))));
+  const targets = targetsOf(color, r, c);
+  G.fx.push(orbFx(r, c, 260 + targets.length * 38 + 260));
+  await Promise.all(targets.map(([y, x], i) => zapTo(r, c, y, x, KIND[color].c, i).then(() => hitCell(y, x, ctx))));
+  await delay(120);
 }
 async function ballConvert(r, c, other) {
   const color = mostCommonColor(); sfx.zap();
-  const targets = [];
-  for (let y = 0; y < G.rows; y++) for (let x = 0; x < G.cols; x++) if (kindAt(y, x) === color) targets.push([y, x]);
-  G.fx.push(boltFx(r, c, targets, KIND[color].c));
-  for (const [y, x] of targets) {
-    if (G.grid[y][x].ice) { hitIce(y, x); continue; }
-    const t = G.grid[y][x].tile; t.sp = other === 'rh' || other === 'rv' ? (Math.random() < .5 ? 'rh' : 'rv') : other; t.k = -1; t.s = .3; tween(t, { s: 1 }, 260, easeBack);
-  }
-  await delay(500);
+  const targets = targetsOf(color, r, c);
+  G.fx.push(orbFx(r, c, 300 + targets.length * 38 + 400));
+  await Promise.all(targets.map(([y, x], i) => zapTo(r, c, y, x, KIND[color].c, i).then(() => {
+    if (G.grid[y][x].ice) { hitIce(y, x); return; }
+    const t = G.grid[y][x].tile; if (!t) return;
+    t.sp = other === 'rh' || other === 'rv' ? (Math.random() < .5 ? 'rh' : 'rv') : other; t.k = -1; t.s = .3; t.flash = 1;
+    tween(t, { s: 1 }, 260, easeBack); tween(t, { flash: 0 }, 300); G.fx.push(raysFx(y, x)); sfx.special();
+  })));
+  await delay(350);
   targets.sort(() => Math.random() - .5);
   for (const [y, x] of targets) {
     const t = G.grid[y][x].tile;
-    if (t && t.sp) { G.grid[y][x].tile = null; track(fire(y, x, t)); await delay(70); }
+    if (t && t.sp) { G.grid[y][x].tile = null; track(fire(y, x, t, { chained: true })); await delay(70); }
   }
 }
 async function clearAll(r, c, ctx) {
-  sfx.zap(); sfx.boom(); G.shake = 14;
+  sfx.zap(); sfx.boom(); G.shake = 16 * JUICE;
   const all = [];
   for (let y = 0; y < G.rows; y++) for (let x = 0; x < G.cols; x++) all.push([y, x]);
-  G.fx.push(boltFx(r, c, all, '#ffffff'));
-  await Promise.all(all.map(([y, x]) => delay(Math.hypot(y - r, x - c) * 45).then(() => hitCell(y, x, ctx))));
+  G.fx.push(orbFx(r, c, 900)); G.fx.push(rainbowWaveFx(r, c));
+  await Promise.all(all.map(([y, x]) => delay(Math.hypot(y - r, x - c) * 55).then(() => { if (playable(y, x)) cellFlash(y, x, `hsl(${(y * 40 + x * 25) % 360},100%,75%)`); hitCell(y, x, ctx); })));
 }
 function consume(t) { if (!G.dying.includes(t)) { G.dying.push(t); tween(t, { s: 0, a: 0 }, 180).then(() => removeFrom(G.dying, t)); } }
 
@@ -1376,7 +1420,7 @@ async function winFlow() {
       const sps = [];
       for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) { const t = G.grid[r][c].tile; if (t && t.sp) sps.push([r, c, t]); }
       if (!sps.length) break;
-      for (const [r, c, t] of sps) { if (G.grid[r][c].tile !== t) continue; G.grid[r][c].tile = null; track(fire(r, c, t)); await delay(120); }
+      for (const [r, c, t] of sps) { if (G.grid[r][c].tile !== t) continue; G.grid[r][c].tile = null; track(fire(r, c, t, { chained: true })); await delay(120); }
       await flush(); await cascade();
     }
   }
@@ -1491,57 +1535,172 @@ function confetti(n) {
   const cols = ['#ffc53d', '#e8343f', '#2d7fe6', '#3cb84a', '#9b4fd8', '#ffffff'];
   for (let i = 0; i < n; i++) confettiBits.push({ x: Math.random() * innerWidth, y: -20 - Math.random() * innerHeight * .6, vx: (Math.random() - .5) * 1.5, vy: 2 + Math.random() * 3, rot: Math.random() * 6, vr: (Math.random() - .5) * .3, flip: Math.random() * 6, w: 6 + Math.random() * 6, h: 10 + Math.random() * 8, c: cols[i % cols.length] });
 }
-function rocketFx(r, c, dir) {
-  const t0 = performance.now(), n = dir === 'h' ? G.cols : G.rows;
+// Particles in board pixels. kinds: fire (additive, shrinks), smoke (grows, drifts up),
+// spark (additive streak), chip, star, dot. size is a fraction of a cell.
+function emit(x, y, o) {
+  const cols = Array.isArray(o.color) ? o.color : [o.color];
+  for (let i = 0; i < o.n; i++) {
+    const a = o.dir != null ? o.dir + (Math.random() - .5) * (o.spread || .8) : Math.random() * Math.PI * 2;
+    const v = (o.speed || .3) * G.cs * .1 * (.3 + Math.random() * .7);
+    G.parts.push({ x: x + (Math.random() - .5) * G.cs * (o.jitter || .2), y: y + (Math.random() - .5) * G.cs * (o.jitter || .2), vx: Math.cos(a) * v, vy: Math.sin(a) * v,
+      life: 0, max: (o.life || 500) * (.6 + Math.random() * .6), color: cols[Math.floor(Math.random() * cols.length)], kind: o.kind,
+      size: (o.size || .1) * G.cs * (.6 + Math.random() * .8), rot: Math.random() * 6, vr: (Math.random() - .5) * .4 });
+  }
+}
+function cellFlash(r, c, color) {
+  const t0 = performance.now(), dur = 280;
+  G.fx.push((g, now) => {
+    const p = Math.max(0, (now - t0) / dur); if (p > 1) return false;
+    g.save(); g.globalCompositeOperation = 'lighter'; g.globalAlpha = (1 - p) * .4; g.fillStyle = color;
+    rr(g, G.ox + c * G.cs + 2, G.oy + r * G.cs + 2, G.cs - 4, G.cs - 4, G.cs * .16); g.fill(); g.restore();
+    return true;
+  });
+}
+function chargeFx(r, c, ms, color) {
+  const t0 = performance.now();
   return (g, now) => {
-    const d = (now - t0) / 30; if (d > n + 2) return false;
-    const cs = G.cs, x0 = px(c), y0 = py(r);
-    for (const s of [-1, 1]) {
-      const x = dir === 'h' ? x0 + s * d * cs : x0, y = dir === 'v' ? y0 + s * d * cs : y0;
-      const grd = dir === 'h' ? g.createLinearGradient(x0, 0, x, 0) : g.createLinearGradient(0, y0, 0, y);
-      grd.addColorStop(0, 'rgba(255,220,120,0)'); grd.addColorStop(1, 'rgba(255,240,180,.85)');
-      g.fillStyle = grd;
-      if (dir === 'h') g.fillRect(Math.min(x0, x), y0 - cs * .12, Math.abs(x - x0), cs * .24); else g.fillRect(x0 - cs * .12, Math.min(y0, y), cs * .24, Math.abs(y - y0));
-      g.save(); g.translate(x, y); g.scale(cs * 1.1, cs * 1.1);
-      g.rotate(dir === 'h' ? (s > 0 ? 0 : Math.PI) : (s > 0 ? Math.PI / 2 : -Math.PI / 2));
-      g.translate(-.25, 0); rocketShape(g); g.restore();
+    const p = Math.max(0, (now - t0) / ms); if (p > 1) return false;
+    const x = px(c), y = py(r), cs = G.cs;
+    g.save(); g.globalCompositeOperation = 'lighter';
+    const rad = cs * (.5 + p * .5), gr = g.createRadialGradient(x, y, 0, x, y, rad);
+    gr.addColorStop(0, color); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    g.globalAlpha = .25 + p * .6; g.fillStyle = gr; g.beginPath(); g.arc(x, y, rad, 0, 7); g.fill();
+    g.globalAlpha = (1 - p) * .9; g.strokeStyle = color; g.lineWidth = cs * .06;               // ring closing in
+    g.beginPath(); g.arc(x, y, cs * (1.2 - p * .8), 0, 7); g.stroke();
+    g.globalAlpha = .8; g.lineWidth = 2;                                                         // energy streaks pulled inward
+    for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4 + now / 300, d1 = cs * (1.1 - p * .7), d2 = d1 - cs * .25; g.beginPath(); g.moveTo(x + Math.cos(a) * d1, y + Math.sin(a) * d1); g.lineTo(x + Math.cos(a) * d2, y + Math.sin(a) * d2); g.stroke(); }
+    g.restore(); return true;
+  };
+}
+function rocketFx(r, c, dir, wide = 1) {
+  const t0 = performance.now(), n = dir === 'h' ? G.cols : G.rows, speed = 30;
+  let lastEmit = 0;
+  return (g, now) => {
+    const d = (now - t0) / speed, cs = G.cs, x0 = px(c), y0 = py(r);
+    const fade = Math.max(0, (d - n) / 9); if (fade >= 1) return false;
+    const reach = Math.min(d, n + 1.5) * cs, live = 1 - fade;
+    const heads = [-1, 1].map(sd => [dir === 'h' ? x0 + sd * reach : x0, dir === 'v' ? y0 + sd * reach : y0, sd]);
+    // the beam: warm glow with a hot white core, fading after the rockets leave
+    g.save(); g.globalCompositeOperation = 'lighter';
+    const bw = cs * .42 * wide * live, core = bw * .28;
+    for (const [hx, hy] of heads) {
+      const gr = dir === 'h' ? g.createLinearGradient(x0, 0, hx, 0) : g.createLinearGradient(0, y0, 0, hy);
+      gr.addColorStop(0, `rgba(255,150,40,${.25 * live})`); gr.addColorStop(.75, `rgba(255,210,110,${.65 * live})`); gr.addColorStop(1, `rgba(255,255,230,${live})`);
+      g.fillStyle = gr;
+      if (dir === 'h') g.fillRect(Math.min(x0, hx), y0 - bw / 2, Math.abs(hx - x0), bw); else g.fillRect(x0 - bw / 2, Math.min(y0, hy), bw, Math.abs(hy - y0));
+      g.fillStyle = `rgba(255,255,255,${.8 * live})`;
+      if (dir === 'h') g.fillRect(Math.min(x0, hx), y0 - core / 2, Math.abs(hx - x0), core); else g.fillRect(x0 - core / 2, Math.min(y0, hy), core, Math.abs(hy - y0));
+    }
+    g.restore();
+    if (d <= n + 1.5) {
+      const emitNow = now - lastEmit > 18; if (emitNow) lastEmit = now;
+      for (const [hx, hy, sd] of heads) {
+        const back = dir === 'h' ? (sd > 0 ? Math.PI : 0) : (sd > 0 ? -Math.PI / 2 : Math.PI / 2);
+        if (emitNow) {
+          const bx = hx + Math.cos(back) * cs * .3, by = hy + Math.sin(back) * cs * .3;
+          emit(bx, by, { kind: 'fire', n: 2, speed: .25, dir: back, spread: .9, size: .32 * wide, life: 260, color: ['#fff3a0', '#ffb02e', '#ff6a20'], jitter: .05 });
+          emit(bx, by, { kind: 'smoke', n: 1, speed: .08, dir: back, spread: 1.4, size: .3 * wide, life: 800, color: ['#8a8496', '#a7a1b2'], jitter: .1 });
+          emit(bx, by, { kind: 'spark', n: 1, speed: .5, dir: back + (Math.random() - .5) * 2, size: .04, life: 260, color: '#fff7c0', jitter: .1 });
+        }
+        const ang = dir === 'h' ? (sd > 0 ? 0 : Math.PI) : (sd > 0 ? Math.PI / 2 : -Math.PI / 2);
+        g.save(); g.translate(hx, hy); const sc = cs * 1.15 * Math.sqrt(wide); g.scale(sc, sc); g.rotate(ang + Math.sin(now / 25 + sd) * .05);
+        g.translate(-.25, 0);
+        g.save(); g.globalCompositeOperation = 'lighter'; // flickering exhaust flame
+        const fl = .16 + Math.random() * .08, fg = g.createRadialGradient(0, 0, 0, 0, 0, fl * 1.6);
+        fg.addColorStop(0, 'rgba(255,255,220,1)'); fg.addColorStop(.4, 'rgba(255,190,60,.9)'); fg.addColorStop(1, 'rgba(255,80,20,0)');
+        g.fillStyle = fg; g.beginPath(); g.ellipse(-fl * .6, 0, fl * 1.6, fl * .8, 0, 0, 7); g.fill(); g.restore();
+        rocketShape(g); g.restore();
+      }
     }
     return true;
   };
 }
-function ringFx(r, c, R) {
-  const t0 = performance.now(), dur = 380;
+function fireballFx(r, c, R) {
+  const t0 = performance.now(), dur = 520, blobs = Array.from({ length: 9 }, (_, i) => [i * .7 + Math.random(), .5 + Math.random() * .5]);
   return (g, now) => {
     const p = Math.max(0, (now - t0) / dur); if (p > 1) return false;
-    const rad = (R + .6) * G.cs * easeOut(p);
-    const grd = g.createRadialGradient(px(c), py(r), 0, px(c), py(r), rad);
-    grd.addColorStop(0, `rgba(255,250,200,${.9 * (1 - p)})`); grd.addColorStop(.6, `rgba(255,160,40,${.7 * (1 - p)})`); grd.addColorStop(1, 'rgba(255,80,20,0)');
-    g.fillStyle = grd; g.beginPath(); g.arc(px(c), py(r), rad, 0, 7); g.fill();
+    const x = px(c), y = py(r), grow = easeOut(Math.min(1, p * 2.4)), rad = (R + .5) * G.cs * grow, live = 1 - p;
+    g.save(); g.globalCompositeOperation = 'lighter';
+    const layer = (rr2, stops) => { const gr = g.createRadialGradient(x, y, 0, x, y, rr2); stops.forEach(([o, col]) => gr.addColorStop(o, col)); g.fillStyle = gr; g.beginPath(); g.arc(x, y, rr2, 0, 7); g.fill(); };
+    layer(rad * 1.15, [[0, `rgba(255,120,30,${.55 * live})`], [1, 'rgba(255,40,10,0)']]);
+    for (const [a, k] of blobs) { // billowing lumps around the edge
+      const bx = x + Math.cos(a + p * 2) * rad * .65, by = y + Math.sin(a + p * 2) * rad * .65, br = rad * .45 * k * (1 + Math.sin(now / 40 + a) * .15);
+      const gr = g.createRadialGradient(bx, by, 0, bx, by, br); gr.addColorStop(0, `rgba(255,200,80,${.6 * live})`); gr.addColorStop(1, 'rgba(255,90,20,0)');
+      g.fillStyle = gr; g.beginPath(); g.arc(bx, by, br, 0, 7); g.fill();
+    }
+    layer(rad * .7, [[0, `rgba(255,255,235,${live})`], [.5, `rgba(255,220,120,${.8 * live})`], [1, 'rgba(255,160,40,0)']]);
+    g.restore(); return true;
+  };
+}
+function shockFx(r, c, R, color, delayMs = 0) {
+  const t0 = performance.now() + delayMs, dur = 430;
+  return (g, now) => {
+    const p = (now - t0) / dur; if (p < 0) return true; if (p > 1) return false;
+    g.save(); g.globalAlpha = (1 - p) * .85; g.strokeStyle = color; g.lineWidth = G.cs * .28 * (1 - p) + 1;
+    g.beginPath(); g.arc(px(c), py(r), R * G.cs * easeOut(p), 0, 7); g.stroke(); g.restore();
     return true;
   };
 }
-function boltFx(r, c, targets, color) {
-  const t0 = performance.now(), dur = 520;
+// One forked lightning bolt that re-jags itself every few frames while it fades.
+function boltFx(r, c, y, x, color) {
+  const t0 = performance.now(), dur = 300; let pts = null, branch = null, last = 0;
+  const jag = () => {
+    const x0 = px(c), y0 = py(r), x1 = px(x), y1 = py(y), n = 7, out = [[x0, y0]], nx = -(y1 - y0), ny = x1 - x0, len = Math.hypot(nx, ny) || 1;
+    for (let i = 1; i < n; i++) { const f = i / n, j = (Math.random() - .5) * G.cs * .55 * Math.sin(f * Math.PI); out.push([x0 + (x1 - x0) * f + nx / len * j, y0 + (y1 - y0) * f + ny / len * j]); }
+    out.push([x1, y1]);
+    const [bx, by] = out[3], a = Math.atan2(y1 - y0, x1 - x0) + (Math.random() < .5 ? -.8 : .8);
+    branch = [[bx, by], [bx + Math.cos(a) * G.cs * .5, by + Math.sin(a) * G.cs * .5], [bx + Math.cos(a + .3) * G.cs * .9, by + Math.sin(a + .3) * G.cs * .9]];
+    return out;
+  };
   return (g, now) => {
     const p = Math.max(0, (now - t0) / dur); if (p > 1) return false;
-    g.save(); g.globalAlpha = 1 - p; g.strokeStyle = color; g.lineWidth = 3; g.shadowColor = '#fff'; g.shadowBlur = 10;
-    for (const [y, x] of targets) {
-      g.beginPath(); g.moveTo(px(c), py(r));
-      for (let i = 1; i <= 4; i++) { const f = i / 4; g.lineTo(px(c) + (px(x) - px(c)) * f + (i < 4 ? (Math.random() - .5) * G.cs * .3 : 0), py(r) + (py(y) - py(r)) * f + (i < 4 ? (Math.random() - .5) * G.cs * .3 : 0)); }
-      g.stroke();
-    }
+    if (!pts || now - last > 45) { pts = jag(); last = now; }
+    const line = (P, w, col, a) => { g.globalAlpha = a; g.strokeStyle = col; g.lineWidth = w; g.beginPath(); P.forEach(([px2, py2], i) => i ? g.lineTo(px2, py2) : g.moveTo(px2, py2)); g.stroke(); };
+    g.save(); g.globalCompositeOperation = 'lighter'; g.lineJoin = 'round'; g.lineCap = 'round';
+    const live = 1 - p;
+    line(pts, G.cs * .22, color, .35 * live); line(pts, G.cs * .07, color, .9 * live); line(pts, G.cs * .028, '#ffffff', live);
+    line(branch, G.cs * .035, color, .6 * live); line(branch, G.cs * .014, '#ffffff', .8 * live);
+    g.restore(); return true;
+  };
+}
+// The light ball lifts, spins inside rainbow rays while it fires, then implodes with a flash.
+function orbFx(r, c, dur) {
+  const t0 = performance.now();
+  return (g, now) => {
+    const p = Math.max(0, (now - t0) / dur); if (p > 1) { emit(px(c), py(r), { kind: 'star', n: 14, speed: .6, size: .14, life: 600, color: ['#ff6b7a', '#ffd84d', '#7fe08a', '#7fc4ff', '#d7a8ff'] }); return false; }
+    const x = px(c), y = py(r) - G.cs * .25 * Math.min(1, p * 5), cs = G.cs;
+    const sc = p < .85 ? 1 + Math.min(1, p * 4) * .45 : 1.45 * (1 - (p - .85) / .15);
+    g.save(); g.translate(x, y); g.globalCompositeOperation = 'lighter';
+    g.rotate(now / 260);
+    for (let i = 0; i < 12; i++) { g.rotate(Math.PI / 6); g.fillStyle = `hsla(${(i * 30 + now / 4) % 360},100%,65%,.35)`; g.beginPath(); g.moveTo(0, 0); g.lineTo(-cs * .1, -cs * 1.6 * sc); g.lineTo(cs * .1, -cs * 1.6 * sc); g.fill(); }
+    g.restore();
+    g.save(); g.translate(x, y); g.scale(cs * .95 * sc, cs * .95 * sc); g.rotate(now / 90); LIVE.ball(g, now); g.restore();
+    return true;
+  };
+}
+function rainbowWaveFx(r, c) {
+  const t0 = performance.now(), dur = 900, maxR = Math.hypot(G.rows, G.cols) * G.cs;
+  return (g, now) => {
+    const p = Math.max(0, (now - t0) / dur); if (p > 1) return false;
+    g.save(); g.globalCompositeOperation = 'lighter'; g.lineWidth = G.cs * .5 * (1 - p) + 2;
+    for (let k = 0; k < 3; k++) { const q = p - k * .08; if (q <= 0) continue; g.globalAlpha = (1 - q) * .55; g.strokeStyle = `hsl(${(k * 120 + now / 3) % 360},100%,65%)`; g.beginPath(); g.arc(px(c), py(r), maxR * easeOut(q), 0, 7); g.stroke(); }
     g.restore(); return true;
   };
 }
 function flyPropFx(r, c, tr, tc, carry) {
   return new Promise(res => {
-    const t0 = performance.now(), dur = 520;
+    const t0 = performance.now(), dur = 640, trail = []; let lastSpark = 0;
     G.fx.push((g, now) => {
-      const p = Math.min(1, (now - t0) / dur), e = easeIO(p);
-      const x = px(c) + (px(tc) - px(c)) * e, y = py(r) + (py(tr) - py(r)) * e - Math.sin(p * Math.PI) * G.cs * 1.4;
-      g.save(); g.translate(x, y); g.scale(G.cs * 1.1, G.cs * 1.1);
-      if (carry) { g.save(); g.translate(0, .22); g.scale(.6, .6); DRAW[carry] ? DRAW[carry](g) : LIVE[carry](g, now); g.restore(); }
-      LIVE.prop(g, now, 3); g.restore();
+      const p = Math.min(1, (now - t0) / dur), cs = G.cs;
+      let x, y, sc;
+      if (p < .22) { const q = easeOut(p / .22); x = px(c); y = py(r) - q * cs * .6; sc = 1 + q * .3; }             // lift off
+      else { const q = easeIO((p - .22) / .78); x = px(c) + (px(tc) - px(c)) * q; y = py(r) - cs * .6 + (py(tr) - py(r) + cs * .6) * q - Math.sin(q * Math.PI) * cs * 1.3; sc = 1.3 - q * .2; }
+      trail.push([x, y]); if (trail.length > 9) trail.shift();
+      trail.forEach(([tx, ty], i) => { g.save(); g.globalAlpha = (i / trail.length) * .3; g.translate(tx, ty); g.scale(cs * sc * .9, cs * sc * .9); LIVE.prop(g, now, 4); g.restore(); });
+      if (now - lastSpark > 30) { lastSpark = now; emit(x, y, { kind: 'star', n: 1, speed: .1, size: .1, life: 400, color: ['#ffffff', '#bfe3ff'], jitter: .4 }); }
+      g.save(); g.translate(x, y); g.scale(cs * 1.1 * sc, cs * 1.1 * sc);
+      if (carry) { g.save(); g.translate(0, .24); g.scale(.62, .62); DRAW[carry] ? DRAW[carry](g) : LIVE[carry](g, now); g.restore(); }
+      LIVE.prop(g, now, 4); g.restore();
       if (p >= 1) { res(); return false; }
       return true;
     });
@@ -1746,6 +1905,7 @@ function renderBoard(now, dt) {
   g.setTransform(DPR, 0, 0, DPR, 0, 0); g.clearRect(0, 0, G.W, G.H);
   g.save();
   if (G.shake > 0) { g.translate(Math.sin(now / 23) * G.shake, Math.cos(now / 29) * G.shake * .8); G.shake *= .86; if (G.shake < .4) G.shake = 0; }
+  if (G.zoom > .001) { g.translate(G.W / 2, G.H / 2); g.scale(1 + G.zoom, 1 + G.zoom); g.translate(-G.W / 2, -G.H / 2); G.zoom *= .9; } // camera punch on big combos
   if (G.bg) g.drawImage(G.bg, 0, 0, G.W, G.H);
   if (G.sel) {
     const [r, c] = G.sel, x = G.ox + c * cs + 2, y = G.oy + r * cs + 2, w = cs - 4;
@@ -1786,10 +1946,15 @@ function renderBoard(now, dt) {
   for (let i = G.parts.length - 1; i >= 0; i--) {
     const p = G.parts[i]; p.life += dt;
     if (p.life > p.max) { G.parts.splice(i, 1); continue; }
-    p.vy += G.cs * (p.kind === 'star' ? .0004 : .0011) * dt / 16; p.x += p.vx * dt / 16 * 1.6; p.y += p.vy * dt / 16 * 1.6; p.rot += p.vr * dt / 16;
+    const grav = p.kind === 'star' ? .0004 : p.kind === 'smoke' ? -.0003 : p.kind === 'fire' ? -.00035 : p.kind === 'spark' ? .0006 : .0011;
+    if (p.kind === 'fire' || p.kind === 'smoke') { const k = Math.pow(.93, dt / 16); p.vx *= k; p.vy *= k; }
+    p.vy += G.cs * grav * dt / 16; p.x += p.vx * dt / 16 * 1.6; p.y += p.vy * dt / 16 * 1.6; p.rot += p.vr * dt / 16;
     const lp = p.life / p.max;
     g.globalAlpha = lp > .6 ? 1 - (lp - .6) / .4 : 1; g.fillStyle = p.color;
-    if (p.kind === 'chip') { g.save(); g.translate(p.x, p.y); g.rotate(p.rot); g.fillRect(-p.size / 2, -p.size / 3, p.size, p.size * .66); g.restore(); }
+    if (p.kind === 'smoke') { g.globalAlpha = (1 - lp) * .42; g.beginPath(); g.arc(p.x, p.y, p.size / 2 * (1 + lp * 1.8), 0, 7); g.fill(); }
+    else if (p.kind === 'fire') { g.save(); g.globalCompositeOperation = 'lighter'; g.globalAlpha = 1 - lp; g.beginPath(); g.arc(p.x, p.y, p.size / 2 * (1 - lp * .7), 0, 7); g.fill(); g.restore(); }
+    else if (p.kind === 'spark') { g.save(); g.globalCompositeOperation = 'lighter'; g.globalAlpha = 1 - lp; g.strokeStyle = p.color; g.lineWidth = Math.max(1, p.size); g.lineCap = 'round'; g.beginPath(); g.moveTo(p.x, p.y); g.lineTo(p.x - p.vx * 3, p.y - p.vy * 3); g.stroke(); g.restore(); }
+    else if (p.kind === 'chip') { g.save(); g.translate(p.x, p.y); g.rotate(p.rot); g.fillRect(-p.size / 2, -p.size / 3, p.size, p.size * .66); g.restore(); }
     else if (p.kind === 'star') SPARK(g, p.x, p.y, p.size * (1 - lp * .6));
     else { g.beginPath(); g.arc(p.x, p.y, p.size / 2 * (1 - lp * .5), 0, 7); g.fill(); }
   }
