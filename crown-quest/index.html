@@ -372,8 +372,12 @@ const sfx = {
     [0, 4, 7, 12].forEach((st, i) => osc({ f: midi(76 + st), type: 'triangle', dur: .3, vol: .085, at: i * .05, verb: .6 }));
     nz({ dur: .5, vol: .05, hp: [5000, 9000], verb: .7 });
   },
-  rocket(pan = 0) { nz({ dur: .5, vol: .16, bp: [300, 5200], q: 2, pan }); osc({ f: 180, f2: 1300, type: 'sawtooth', dur: .32, vol: .035, lp: 2200, pan, verb: .2 }); },
+  rocket(pan = 0) {
+    nz({ dur: .5, vol: .16, bp: [300, 5200], q: 2, pan }); osc({ f: 180, f2: 1300, type: 'sawtooth', dur: .32, vol: .035, lp: 2200, pan, verb: .2 });
+    if (HALLOWEEN && !throttle('cackle', 600)) for (let i = 0; i < 4; i++) osc({ f: midi(79 - i * 2), f2: midi(75 - i * 2), type: 'sawtooth', dur: .07, vol: .03, at: .05 + i * .085, lp: 2400, vib: 35, pan, verb: .3 }); // witch's cackle
+  },
   boom() {
+    if (HALLOWEEN) for (let i = 0; i < 7; i++) osc({ f: 250 + Math.random() * 250, f2: 700 + Math.random() * 500, dur: .08, vol: .05, at: .12 + i * .07, verb: .3 }); // cauldron bubbles
     osc({ f: 140, f2: 32, dur: .7, vol: .5, verb: .1 });
     nz({ dur: .9, vol: .42, lp: [1800, 70], verb: .35 });
     nz({ dur: .2, vol: .14, hp: 4000, at: .01 });
@@ -950,12 +954,107 @@ const DRAW_H = {
     g.fillStyle = '#ff4d4d'; for (const sd of [-1, 1]) { g.beginPath(); g.arc(.3 + sd * .015, .095, .009, 0, 7); g.fill(); }
   },
 };
+/* ---------- Halloween power-ups ---------- */
+const IRON = { light: '#8a86a0', base: '#3a364a', dark: '#120f1a', line: '#05040a' };
+const STRAW = { light: '#ffe08a', base: '#e0a632', dark: '#8a5a12', line: '#3d2604' };
+const BROOMWOOD = { light: '#c98a52', base: '#8a5326', dark: '#4a2a10', line: '#241205' };
+function broomShape(g) {
+  // a witch's broom flying toward +x: handle leads, bristles trail behind (x 0..0.5)
+  toy(g, g => rr(g, .1, -.04, .4, .08, .04), BROOMWOOD, null, { x: .25, y: -.02, r: .08 });
+  toy(g, g => { g.beginPath(); g.moveTo(.2, -.055); g.quadraticCurveTo(.06, -.07, -.04, -.17); g.quadraticCurveTo(-.08, 0, -.04, .17); g.quadraticCurveTo(.06, .07, .2, .055); g.closePath(); }, STRAW, g => {
+    g.strokeStyle = 'rgba(110,60,0,.45)'; g.lineWidth = .012;
+    for (const y of [-.1, -.05, 0, .05, .1]) { g.beginPath(); g.moveTo(.18, y * .35); g.quadraticCurveTo(.06, y * .8, -.06, y * 1.5); g.stroke(); }
+  }, { x: .04, y: -.07, r: .07 });
+  g.fillStyle = '#8a35d6'; rr(g, .15, -.065, .045, .13, .015); g.fill(); // tie
+}
+const DRAW_H_POWER = {
+  rh(g) {
+    const glow = g.createRadialGradient(0, 0, .05, 0, 0, .48); glow.addColorStop(0, 'rgba(170,90,255,.5)'); glow.addColorStop(1, 'rgba(170,90,255,0)');
+    g.fillStyle = glow; g.beginPath(); g.arc(0, 0, .48, 0, 7); g.fill();
+    // one big broom filling the tile, tilted as if mid-flight
+    g.save(); g.rotate(-.18);
+    toy(g, g => rr(g, -.48, -.05, .6, .1, .05), BROOMWOOD, null, { x: -.2, y: -.025, r: .1 });
+    toy(g, g => { g.beginPath(); g.moveTo(.06, -.08); g.quadraticCurveTo(.3, -.12, .48, -.25); g.quadraticCurveTo(.52, 0, .48, .25); g.quadraticCurveTo(.3, .12, .06, .08); g.closePath(); }, STRAW, g => {
+      g.strokeStyle = 'rgba(110,60,0,.45)'; g.lineWidth = .014;
+      for (const y of [-.16, -.08, 0, .08, .16]) { g.beginPath(); g.moveTo(.08, y * .4); g.quadraticCurveTo(.3, y * .8, .5, y * 1.4); g.stroke(); }
+    }, { x: .2, y: -.08, r: .1 });
+    g.fillStyle = '#8a35d6'; rr(g, .05, -.1, .07, .2, .02); g.fill();
+    g.fillStyle = 'rgba(255,255,255,.35)'; g.fillRect(.06, -.09, .05, .03);
+    g.restore();
+    twinkle(g, -.3, -.2, .06); twinkle(g, -.12, .2, .045); twinkle(g, .36, -.3, .035);
+  },
+  rv(g) { g.save(); g.rotate(Math.PI / 2); DRAW_H_POWER.rh(g); g.restore(); },
+  tnt(g) { // bubbling cauldron
+    const glow = g.createRadialGradient(0, -.15, .05, 0, -.1, .5); glow.addColorStop(0, 'rgba(150,255,90,.55)'); glow.addColorStop(1, 'rgba(150,255,90,0)');
+    g.fillStyle = glow; g.beginPath(); g.arc(0, -.1, .5, 0, 7); g.fill();
+    for (const sd of [-1, 1]) toy(g, g => rr(g, sd * .24 - .05, .26, .1, .16, .04), IRON, null, null);
+    toy(g, g => { g.beginPath(); g.moveTo(-.4, -.12); g.bezierCurveTo(-.46, .2, -.25, .38, 0, .38); g.bezierCurveTo(.25, .38, .46, .2, .4, -.12); g.closePath(); }, IRON, null, { x: -.18, y: .02, r: .14 });
+    toy(g, g => { g.beginPath(); g.ellipse(0, -.13, .44, .1, 0, 0, 7); }, IRON, null, null);
+    g.beginPath(); g.ellipse(0, -.14, .36, .065, 0, 0, 7); g.fillStyle = lg(g, 0, -.2, 0, -.08, [[0, '#e6ff9a'], [1, '#3fb01a']]); g.fill();
+    g.beginPath(); g.moveTo(-.3, -.12); g.quadraticCurveTo(-.33, .0, -.3, .06); g.quadraticCurveTo(-.27, .0, -.26, -.12); g.fillStyle = '#6cd92a'; g.fill(); // drip over the rim
+    for (const [x, y, r] of [[-.12, -.24, .06], [.08, -.31, .045], [.19, -.21, .05], [-.02, -.38, .03]]) {
+      g.beginPath(); g.arc(x, y, r, 0, 7); g.fillStyle = 'rgba(140,240,80,.85)'; g.fill();
+      g.beginPath(); g.arc(x - r * .35, y - r * .35, r * .3, 0, 7); g.fillStyle = 'rgba(255,255,255,.8)'; g.fill();
+    }
+  },
+};
+const LIVE_H = {
+  prop(g, now, sp = 1) { // bat-winged skull
+    const glow = g.createRadialGradient(0, 0, .05, 0, 0, .46); glow.addColorStop(0, 'rgba(150,255,90,.4)'); glow.addColorStop(1, 'rgba(150,255,90,0)');
+    g.fillStyle = glow; g.beginPath(); g.arc(0, 0, .46, 0, 7); g.fill();
+    const flap = Math.sin(now / 55 * sp) * .45;
+    for (const sd of [-1, 1]) {
+      g.save(); g.translate(sd * .13, -.04); g.rotate(sd * flap); g.scale(sd, 1);
+      g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(.12, -.2, .36, -.16); g.quadraticCurveTo(.32, -.06, .33, .04); g.quadraticCurveTo(.26, -.02, .2, .06); g.quadraticCurveTo(.14, .0, .06, .08); g.closePath();
+      g.fillStyle = lg(g, 0, -.2, 0, .08, [[0, '#7a3ab8'], [1, '#2a0a4a']]); g.fill();
+      g.strokeStyle = 'rgba(200,150,255,.5)'; g.lineWidth = .015; g.beginPath(); g.moveTo(.02, 0); g.lineTo(.33, .03); g.moveTo(.02, 0); g.lineTo(.2, .05); g.stroke();
+      g.restore();
+    }
+    const bone = g.createRadialGradient(-.06, -.12, .02, 0, -.04, .26); bone.addColorStop(0, '#ffffff'); bone.addColorStop(.6, '#efe6d0'); bone.addColorStop(1, '#a89c80');
+    g.fillStyle = bone; g.beginPath(); g.arc(0, -.06, .19, 0, 7); g.fill(); rr(g, -.1, .04, .2, .12, .04); g.fill();
+    for (const sd of [-1, 1]) { g.beginPath(); g.ellipse(sd * .075, -.06, .055, .065, 0, 0, 7); g.fillStyle = '#1a1020'; g.fill(); g.beginPath(); g.arc(sd * .075, -.055, .022, 0, 7); g.fillStyle = '#9bff5a'; g.fill(); }
+    poly(g, [[0, .0], [-.025, .045], [.025, .045]]); g.fillStyle = '#1a1020'; g.fill();
+    g.strokeStyle = '#6a5e48'; g.lineWidth = .014; g.beginPath(); for (const x of [-.05, 0, .05]) { g.moveTo(x, .08); g.lineTo(x, .15); } g.stroke();
+  },
+  ball(g, now) { // crystal ball on a stand with swirling mist
+    const pulse = .5 + Math.sin(now / 300) * .15;
+    const glow = g.createRadialGradient(0, -.06, .1, 0, -.06, .52); glow.addColorStop(0, `rgba(200,120,255,${pulse})`); glow.addColorStop(1, 'rgba(200,120,255,0)');
+    g.fillStyle = glow; g.beginPath(); g.arc(0, -.06, .52, 0, 7); g.fill();
+    g.beginPath(); g.moveTo(-.2, .4); g.lineTo(-.13, .2); g.lineTo(.13, .2); g.lineTo(.2, .4); g.closePath();
+    g.fillStyle = lg(g, -.2, 0, .2, 0, [[0, '#7a4a12'], [.35, '#ffcf5a'], [1, '#6a3a08']]); g.fill();
+    const orb = g.createRadialGradient(-.1, -.18, .02, 0, -.06, .32); orb.addColorStop(0, '#f5e0ff'); orb.addColorStop(.5, '#a35af0'); orb.addColorStop(1, '#3a0f7a');
+    g.save(); g.beginPath(); g.arc(0, -.06, .31, 0, 7); g.fillStyle = orb; g.fill(); g.clip();
+    for (let i = 0; i < 3; i++) { // mist swirling inside the glass
+      g.save(); g.translate(0, -.06); g.rotate(now / (500 + i * 170) + i * 2.1);
+      g.fillStyle = ['rgba(140,255,120,.35)', 'rgba(255,160,230,.3)', 'rgba(255,255,255,.25)'][i];
+      g.beginPath(); g.ellipse(.08, 0, .2, .07, .4, 0, 7); g.fill(); g.restore();
+    }
+    g.restore();
+    g.beginPath(); g.ellipse(-.1, -.2, .09, .05, -.6, 0, 7); g.fillStyle = 'rgba(255,255,255,.8)'; g.fill();
+    g.beginPath(); g.arc(0, -.06, .31, 0, 7); g.lineWidth = .02; g.strokeStyle = 'rgba(255,255,255,.35)'; g.stroke();
+  },
+};
+Object.assign(DRAW_H, DRAW_H_POWER);
+// The live (animated) drawing for a power-up under the current theme.
+const live = key => (HALLOWEEN && LIVE_H[key]) || LIVE[key];
+// Effect colours for power-ups: warm fire normally, witchy purple and green at Halloween.
+const fxPal = () => HALLOWEEN ? {
+  beam: ['140,50,220', '120,230,90', '235,255,210'], flame: ['rgba(235,255,210,1)', 'rgba(140,240,90,.9)', 'rgba(150,60,240,0)'],
+  trail: ['#e6ffb0', '#8be04a', '#b04aff'], smoke: ['#4a3a5c', '#6a5a7e'], spark: '#d9ffb0',
+  fire: ['#f0ffc0', '#9be04a', '#5fcf2a', '#a043f0'], boomSmoke: ['#3a2a4a', '#5a4a6a', '#2e2440'], boomSpark: ['#e6ffb0', '#b8ff7a', '#ffffff'],
+  ball: ['255,255,240', '170,255,120', '100,220,60'], outer: ['120,230,60', '80,180,40'], blob: ['180,255,120', '90,200,40'], cell: '#c6ff9a', shock: ['#eaffd8', '#b07aff'],
+} : {
+  beam: ['255,150,40', '255,210,110', '255,255,230'], flame: ['rgba(255,255,220,1)', 'rgba(255,190,60,.9)', 'rgba(255,80,20,0)'],
+  trail: ['#fff3a0', '#ffb02e', '#ff6a20'], smoke: ['#8a8496', '#a7a1b2'], spark: '#fff7c0',
+  fire: ['#fff3a0', '#ffc23d', '#ff7a20', '#ff4a20'], boomSmoke: ['#5b5566', '#77707f', '#45404f'], boomSpark: ['#fff7c0', '#ffd24d', '#ffffff'],
+  ball: ['255,255,235', '255,220,120', '255,160,40'], outer: ['255,120,30', '255,40,10'], blob: ['255,200,80', '255,90,20'], cell: '#ffd08a', shock: ['#fff6d8', '#ffb36b'],
+};
 // The drawing used for a key under the current theme.
 const art = key => (HALLOWEEN && DRAW_H[key]) || DRAW[key];
 function drawIcon(canvas, key) {
   const g = canvas.getContext('2d'), w = canvas.width;
   g.clearRect(0, 0, w, w); g.save(); g.translate(w / 2, w / 2); g.scale(w, w); PX = w;
-  if (LIVE[key]) LIVE[key](g, 0); else art(key)(g);
+  if (LIVE[key]) live(key)(g, 0); else art(key)(g);
   g.restore();
 }
 document.querySelectorAll('canvas[data-icon]').forEach(c => drawIcon(c, c.dataset.icon));
@@ -1259,7 +1358,7 @@ const CHARGE_COLOR = { tnt: '#ff7a2e', ball: '#ffffff', all: '#ffffff', prop: '#
 async function windUp(r, c, t, ms, type) {
   t.flash = 0; t.held = true;
   tween(t, { s: 1.32, flash: .85 }, ms, easeIn);
-  G.fx.push(chargeFx(r, c, ms, CHARGE_COLOR[type] || '#ffd84d'));
+  G.fx.push(chargeFx(r, c, ms, HALLOWEEN ? (type === 'ball' || type === 'all' ? '#d9a0ff' : '#9be04a') : (CHARGE_COLOR[type] || '#ffd84d')));
   const iv = setInterval(() => { t.ox = (Math.random() - .5) * .09; t.oy = (Math.random() - .5) * .09; }, 16);
   await delay(ms);
   clearInterval(iv); t.ox = t.oy = 0; t.held = false;
@@ -1286,17 +1385,17 @@ function at(r, c) { return inB(r, c) ? G.grid[r][c].tile : null; }
 async function explode(r, c, R, ctx) {
   sfx.boom(); G.shake = (9 + R * 3.5) * JUICE; G.flash = Math.max(G.flash || 0, (.24 + R * .04) * JUICE);
   if (R > 2) G.zoom = .06 * JUICE;
-  G.fx.push(fireballFx(r, c, R)); G.fx.push(shockFx(r, c, R + 1.8, '#fff6d8')); G.fx.push(shockFx(r, c, R + 3, '#ffb36b', 120));
+  G.fx.push(fireballFx(r, c, R)); G.fx.push(shockFx(r, c, R + 1.8, fxPal().shock[0])); G.fx.push(shockFx(r, c, R + 3, fxPal().shock[1], 120));
   shove(r, c, 8, R + 2.5);
   const x = px(c), y = py(r);
-  emit(x, y, { kind: 'fire', n: 24 + R * 6, speed: .38 * R, size: .55, life: 520, color: ['#fff3a0', '#ffc23d', '#ff7a20', '#ff4a20'] });
-  emit(x, y, { kind: 'smoke', n: 12 + R * 4, speed: .14 * R, size: .55, life: 1400, color: ['#5b5566', '#77707f', '#45404f'] });
-  emit(x, y, { kind: 'spark', n: 20 + R * 5, speed: .7 * R, size: .05, life: 480, color: ['#fff7c0', '#ffd24d', '#ffffff'] });
+  emit(x, y, { kind: 'fire', n: 24 + R * 6, speed: .38 * R, size: .55, life: 520, color: fxPal().fire });
+  emit(x, y, { kind: 'smoke', n: 12 + R * 4, speed: .14 * R, size: .55, life: 1400, color: fxPal().boomSmoke });
+  emit(x, y, { kind: 'spark', n: 20 + R * 5, speed: .7 * R, size: .05, life: 480, color: fxPal().boomSpark });
   emit(x, y, { kind: 'chip', n: 10, speed: .5 * R, size: .13, life: 850, color: ['#3a2a2a', '#7a4a22', '#555a73'] });
   const ps = [];
   for (let dr = -R; dr <= R; dr++) for (let dc = -R; dc <= R; dc++) {
     const d = Math.max(Math.abs(dr), Math.abs(dc));
-    ps.push(delay(d * 45).then(() => { if (playable(r + dr, c + dc)) cellFlash(r + dr, c + dc, '#ffd08a'); hitCell(r + dr, c + dc, ctx); }));
+    ps.push(delay(d * 45).then(() => { if (playable(r + dr, c + dc)) cellFlash(r + dr, c + dc, fxPal().cell); hitCell(r + dr, c + dc, ctx); }));
   }
   await Promise.all(ps);
 }
@@ -1767,7 +1866,7 @@ function rocketFx(r, c, dir, wide = 1) {
     const bw = cs * .42 * wide * live, core = bw * .28;
     for (const [hx, hy] of heads) {
       const gr = dir === 'h' ? g.createLinearGradient(x0, 0, hx, 0) : g.createLinearGradient(0, y0, 0, hy);
-      gr.addColorStop(0, `rgba(255,150,40,${.25 * live})`); gr.addColorStop(.75, `rgba(255,210,110,${.65 * live})`); gr.addColorStop(1, `rgba(255,255,230,${live})`);
+      const B = fxPal().beam; gr.addColorStop(0, `rgba(${B[0]},${.25 * live})`); gr.addColorStop(.75, `rgba(${B[1]},${.65 * live})`); gr.addColorStop(1, `rgba(${B[2]},${live})`);
       g.fillStyle = gr;
       if (dir === 'h') g.fillRect(Math.min(x0, hx), y0 - bw / 2, Math.abs(hx - x0), bw); else g.fillRect(x0 - bw / 2, Math.min(y0, hy), bw, Math.abs(hy - y0));
       g.fillStyle = `rgba(255,255,255,${.8 * live})`;
@@ -1780,18 +1879,18 @@ function rocketFx(r, c, dir, wide = 1) {
         const back = dir === 'h' ? (sd > 0 ? Math.PI : 0) : (sd > 0 ? -Math.PI / 2 : Math.PI / 2);
         if (emitNow) {
           const bx = hx + Math.cos(back) * cs * .3, by = hy + Math.sin(back) * cs * .3;
-          emit(bx, by, { kind: 'fire', n: 2, speed: .25, dir: back, spread: .9, size: .32 * wide, life: 260, color: ['#fff3a0', '#ffb02e', '#ff6a20'], jitter: .05 });
-          emit(bx, by, { kind: 'smoke', n: 1, speed: .08, dir: back, spread: 1.4, size: .3 * wide, life: 800, color: ['#8a8496', '#a7a1b2'], jitter: .1 });
-          emit(bx, by, { kind: 'spark', n: 1, speed: .5, dir: back + (Math.random() - .5) * 2, size: .04, life: 260, color: '#fff7c0', jitter: .1 });
+          emit(bx, by, { kind: 'fire', n: 2, speed: .25, dir: back, spread: .9, size: .32 * wide, life: 260, color: fxPal().trail, jitter: .05 });
+          emit(bx, by, { kind: 'smoke', n: 1, speed: .08, dir: back, spread: 1.4, size: .3 * wide, life: 800, color: fxPal().smoke, jitter: .1 });
+          emit(bx, by, { kind: 'spark', n: 1, speed: .5, dir: back + (Math.random() - .5) * 2, size: .04, life: 260, color: fxPal().spark, jitter: .1 });
         }
         const ang = dir === 'h' ? (sd > 0 ? 0 : Math.PI) : (sd > 0 ? Math.PI / 2 : -Math.PI / 2);
         g.save(); g.translate(hx, hy); const sc = cs * 1.15 * Math.sqrt(wide); g.scale(sc, sc); g.rotate(ang + Math.sin(now / 25 + sd) * .05);
         g.translate(-.25, 0);
         g.save(); g.globalCompositeOperation = 'lighter'; // flickering exhaust flame
         const fl = .16 + Math.random() * .08, fg = g.createRadialGradient(0, 0, 0, 0, 0, fl * 1.6);
-        fg.addColorStop(0, 'rgba(255,255,220,1)'); fg.addColorStop(.4, 'rgba(255,190,60,.9)'); fg.addColorStop(1, 'rgba(255,80,20,0)');
+        const FL = fxPal().flame; fg.addColorStop(0, FL[0]); fg.addColorStop(.4, FL[1]); fg.addColorStop(1, FL[2]);
         g.fillStyle = fg; g.beginPath(); g.ellipse(-fl * .6, 0, fl * 1.6, fl * .8, 0, 0, 7); g.fill(); g.restore();
-        rocketShape(g); g.restore();
+        (HALLOWEEN ? broomShape : rocketShape)(g); g.restore();
       }
     }
     return true;
@@ -1804,13 +1903,14 @@ function fireballFx(r, c, R) {
     const x = px(c), y = py(r), grow = easeOut(Math.min(1, p * 2.4)), rad = (R + .5) * G.cs * grow, live = 1 - p;
     g.save(); g.globalCompositeOperation = 'lighter';
     const layer = (rr2, stops) => { const gr = g.createRadialGradient(x, y, 0, x, y, rr2); stops.forEach(([o, col]) => gr.addColorStop(o, col)); g.fillStyle = gr; g.beginPath(); g.arc(x, y, rr2, 0, 7); g.fill(); };
-    layer(rad * 1.15, [[0, `rgba(255,120,30,${.55 * live})`], [1, 'rgba(255,40,10,0)']]);
+    const F = fxPal();
+    layer(rad * 1.15, [[0, `rgba(${F.outer[0]},${.55 * live})`], [1, `rgba(${F.outer[1]},0)`]]);
     for (const [a, k] of blobs) { // billowing lumps around the edge
       const bx = x + Math.cos(a + p * 2) * rad * .65, by = y + Math.sin(a + p * 2) * rad * .65, br = rad * .45 * k * (1 + Math.sin(now / 40 + a) * .15);
-      const gr = g.createRadialGradient(bx, by, 0, bx, by, br); gr.addColorStop(0, `rgba(255,200,80,${.6 * live})`); gr.addColorStop(1, 'rgba(255,90,20,0)');
+      const gr = g.createRadialGradient(bx, by, 0, bx, by, br); gr.addColorStop(0, `rgba(${F.blob[0]},${.6 * live})`); gr.addColorStop(1, `rgba(${F.blob[1]},0)`);
       g.fillStyle = gr; g.beginPath(); g.arc(bx, by, br, 0, 7); g.fill();
     }
-    layer(rad * .7, [[0, `rgba(255,255,235,${live})`], [.5, `rgba(255,220,120,${.8 * live})`], [1, 'rgba(255,160,40,0)']]);
+    layer(rad * .7, [[0, `rgba(${F.ball[0]},${live})`], [.5, `rgba(${F.ball[1]},${.8 * live})`], [1, `rgba(${F.ball[2]},0)`]]);
     g.restore(); return true;
   };
 }
@@ -1854,9 +1954,9 @@ function orbFx(r, c, dur) {
     const sc = p < .85 ? 1 + Math.min(1, p * 4) * .45 : 1.45 * (1 - (p - .85) / .15);
     g.save(); g.translate(x, y); g.globalCompositeOperation = 'lighter';
     g.rotate(now / 260);
-    for (let i = 0; i < 12; i++) { g.rotate(Math.PI / 6); g.fillStyle = `hsla(${(i * 30 + now / 4) % 360},100%,65%,.35)`; g.beginPath(); g.moveTo(0, 0); g.lineTo(-cs * .1, -cs * 1.6 * sc); g.lineTo(cs * .1, -cs * 1.6 * sc); g.fill(); }
+    for (let i = 0; i < 12; i++) { g.rotate(Math.PI / 6); g.fillStyle = HALLOWEEN ? (i % 2 ? 'rgba(170,90,255,.38)' : 'rgba(140,240,90,.3)') : `hsla(${(i * 30 + now / 4) % 360},100%,65%,.35)`; g.beginPath(); g.moveTo(0, 0); g.lineTo(-cs * .1, -cs * 1.6 * sc); g.lineTo(cs * .1, -cs * 1.6 * sc); g.fill(); }
     g.restore();
-    g.save(); g.translate(x, y); g.scale(cs * .95 * sc, cs * .95 * sc); g.rotate(now / 90); LIVE.ball(g, now); g.restore();
+    g.save(); g.translate(x, y); g.scale(cs * .95 * sc, cs * .95 * sc); if (!HALLOWEEN) g.rotate(now / 90); live('ball')(g, now); g.restore();
     return true;
   };
 }
@@ -1878,11 +1978,11 @@ function flyPropFx(r, c, tr, tc, carry) {
       if (p < .22) { const q = easeOut(p / .22); x = px(c); y = py(r) - q * cs * .6; sc = 1 + q * .3; }             // lift off
       else { const q = easeIO((p - .22) / .78); x = px(c) + (px(tc) - px(c)) * q; y = py(r) - cs * .6 + (py(tr) - py(r) + cs * .6) * q - Math.sin(q * Math.PI) * cs * 1.3; sc = 1.3 - q * .2; }
       trail.push([x, y]); if (trail.length > 9) trail.shift();
-      trail.forEach(([tx, ty], i) => { g.save(); g.globalAlpha = (i / trail.length) * .3; g.translate(tx, ty); g.scale(cs * sc * .9, cs * sc * .9); LIVE.prop(g, now, 4); g.restore(); });
+      trail.forEach(([tx, ty], i) => { g.save(); g.globalAlpha = (i / trail.length) * .3; g.translate(tx, ty); g.scale(cs * sc * .9, cs * sc * .9); live('prop')(g, now, 4); g.restore(); });
       if (now - lastSpark > 30) { lastSpark = now; emit(x, y, { kind: 'star', n: 1, speed: .1, size: .1, life: 400, color: ['#ffffff', '#bfe3ff'], jitter: .4 }); }
       g.save(); g.translate(x, y); g.scale(cs * 1.1 * sc, cs * 1.1 * sc);
-      if (carry) { g.save(); g.translate(0, .24); g.scale(.62, .62); DRAW[carry] ? DRAW[carry](g) : LIVE[carry](g, now); g.restore(); }
-      LIVE.prop(g, now, 4); g.restore();
+      if (carry) { g.save(); g.translate(0, .24); g.scale(.62, .62); LIVE[carry] ? live(carry)(g, now) : art(carry)(g); g.restore(); }
+      live('prop')(g, now, 4); g.restore();
       if (p >= 1) { res(); return false; }
       return true;
     });
@@ -2039,6 +2139,12 @@ function introLine(def) {
   if (all.includes('C') || all.includes('D')) return 'Crates in the way! Make matches right next to them to smash them.';
   return SP('Help me rebuild my castle! Match 3 or more to collect the goals.', 'Welcome to my castle\u2026 Match 3 or more to collect the goals. Bwah-ha-ha!');
 }
+const TIPS_H = {
+  rh: 'A witch\u2019s broomstick! Tap it, or swap it, to sweep a whole line.',
+  tnt: 'A bubbling cauldron! Tap it to blow up everything around it.',
+  prop: 'A bat-winged skull! It flies straight to a piece you still need.',
+  ball: 'A crystal ball! Swap it with any piece to clear that whole kind.',
+};
 const TIPS = {
   rh: 'A rocket! Tap it, or swap it, to blast a whole line.',
   tnt: 'TNT! Tap it to blow up everything around it.',
@@ -2048,7 +2154,7 @@ const TIPS = {
 function kingTipFor(sp) {
   S.tips = S.tips || {};
   const key = sp === 'rv' ? 'rh' : sp;
-  if (!S.tips[key]) { S.tips[key] = 1; save(); kingSay(TIPS[key], 'happy', 4500, 2); return; }
+  if (!S.tips[key]) { S.tips[key] = 1; save(); kingSay(SP(TIPS, TIPS_H)[key], 'happy', 4500, 2); return; }
   let specials = 0; for (const row of G.grid) for (const cell of row) if (cell.tile && cell.tile.sp) specials++;
   if (specials >= 2 && !S.tips.combo) { S.tips.combo = 1; save(); kingSay('Psst! Swap two power-ups into each other for a giant combo.', 'happy', 4500, 2); return; }
   kingSay(SP(['Splendid!', 'Marvellous!', 'Jolly good!'], ['Delightfully dreadful!', 'Fang-tastic!', 'Spooky!'])[Math.floor(Math.random() * 3)], 'happy', 1300);
@@ -2102,7 +2208,7 @@ function drawTile(g, t, now, extraScale = 1, ox = 0, oy = 0, rot = 0) {
   const x = px(t.x + t.ox) + ox, y = py(t.y + t.oy) + oy + (size - h) / 2; // squash sits on its base
   g.save(); g.translate(x, y); if (t.rot || rot) g.rotate(t.rot + rot);
   g.globalAlpha = Math.max(0, Math.min(1, t.a));
-  if (t.sp === 'prop' || t.sp === 'ball') { g.scale(w, h); LIVE[t.sp](g, now); }
+  if (t.sp === 'prop' || t.sp === 'ball') { g.scale(w, h); live(t.sp)(g, now); }
   else {
     const spr = sprite(t.sp || 'k' + t.k);
     g.drawImage(spr, -w / 2, -h / 2, w, h);
