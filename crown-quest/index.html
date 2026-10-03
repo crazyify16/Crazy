@@ -200,7 +200,7 @@ button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
     <footer class="mapbar">
       <button class="btn blue" id="castleBtn">Castle</button>
       <button class="btn green" id="playBtn">Level 1</button>
-      <button class="btn ghost" id="muteBtn">Mute</button>
+      <button class="btn ghost" id="soundBtn">Sound</button>
     </footer>
   </section>
 
@@ -252,47 +252,195 @@ const totalStars = () => Object.values(S.stars).reduce((a, b) => a + b, 0);
 const starBalance = () => totalStars() - S.spent;
 
 /* =========================================================
-   Audio (synthesised, starts after first tap)
+   Audio: synthesised sound effects + a looping lute tune.
+   Everything is generated with Web Audio, so there are no files to load.
    ========================================================= */
-let AC = null;
+if (S.music === undefined) S.music = !S.muted;
+if (S.sfx === undefined) S.sfx = !S.muted;
+const AU = { ctx: null };
+const midi = n => 440 * Math.pow(2, (n - 69) / 12);
+function impulse(a, secs, decay) {
+  const len = Math.floor(a.sampleRate * secs), buf = a.createBuffer(2, len, a.sampleRate);
+  for (let ch = 0; ch < 2; ch++) { const d = buf.getChannelData(ch); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay); }
+  return buf;
+}
+// iOS plays Web Audio through the ringer channel (silenced by the mute switch) unless a media
+// element is playing, so loop half a second of silence once the player first touches the screen.
+function silentWav() {
+  const n = 4000, buf = new Uint8Array(44 + n), dv = new DataView(buf.buffer);
+  const w = (o, str) => { for (let i = 0; i < str.length; i++) buf[o + i] = str.charCodeAt(i); };
+  w(0, 'RIFF'); dv.setUint32(4, 36 + n, true); w(8, 'WAVE'); w(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, 8000, true); dv.setUint32(28, 8000, true); dv.setUint16(32, 1, true); dv.setUint16(34, 8, true); w(36, 'data'); dv.setUint32(40, n, true); buf.fill(128, 44);
+  let bin = ''; for (const x of buf) bin += String.fromCharCode(x);
+  return 'data:audio/wav;base64,' + btoa(bin);
+}
 function ac() {
-  if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { AC = null; } }
-  if (AC && AC.state === 'suspended') AC.resume();
-  return AC;
+  if (!AU.ctx) {
+    try {
+      const C = window.AudioContext || window.webkitAudioContext, a = new C();
+      const comp = a.createDynamicsCompressor(); comp.threshold.value = -16; comp.knee.value = 12; comp.ratio.value = 4; comp.connect(a.destination);
+      const master = a.createGain(); master.gain.value = .9; master.connect(comp);
+      const verb = a.createConvolver(); verb.buffer = impulse(a, 1.8, 2.6);
+      const verbOut = a.createGain(); verbOut.gain.value = .5; verb.connect(verbOut).connect(master);
+      const sfxBus = a.createGain(); sfxBus.connect(master);
+      const musicBus = a.createGain(); musicBus.gain.value = .5; musicBus.connect(master);
+      const nbuf = a.createBuffer(1, a.sampleRate * 2, a.sampleRate), nd = nbuf.getChannelData(0);
+      for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+      Object.assign(AU, { ctx: a, verb, sfx: sfxBus, music: musicBus, noise: nbuf });
+      try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) { /* not supported */ }
+      try { const el = new Audio(silentWav()); el.loop = true; el.setAttribute('playsinline', ''); el.volume = .01; el.play().catch(() => {}); AU.el = el; } catch (e) { /* optional */ }
+    } catch (e) { AU.ctx = null; }
+  }
+  if (AU.ctx && AU.ctx.state === 'suspended' && !document.hidden) AU.ctx.resume();
+  return AU.ctx;
 }
-function tone(f, d, type = 'sine', v = .12, f2 = null, when = 0) {
-  const a = ac(); if (!a || S.muted) return;
-  const t = a.currentTime + when, o = a.createOscillator(), g = a.createGain();
-  o.type = type; o.frequency.setValueAtTime(f, t);
-  if (f2) o.frequency.exponentialRampToValueAtTime(f2, t + d);
-  g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(v, t + .01); g.gain.exponentialRampToValueAtTime(.0001, t + d);
-  o.connect(g).connect(a.destination); o.start(t); o.stop(t + d + .03);
+const busOn = bus => bus === 'music' ? S.music : S.sfx;
+// Route a source through an envelope, optional filter and pan, into a bus and the reverb.
+function route(a, src, { t, dur, vol, attack = .004, lp, hp, bp, q = 1, pan = 0, verb = .15, bus = 'sfx' }) {
+  let node = src;
+  for (const [type, f] of [['lowpass', lp], ['highpass', hp], ['bandpass', bp]]) {
+    if (f == null) continue;
+    const fl = a.createBiquadFilter(); fl.type = type; fl.Q.value = q;
+    if (Array.isArray(f)) { fl.frequency.setValueAtTime(f[0], t); fl.frequency.exponentialRampToValueAtTime(f[1], t + dur); } else fl.frequency.value = f;
+    node.connect(fl); node = fl;
+  }
+  const g = a.createGain(); g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + attack); g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+  node.connect(g); node = g;
+  if (pan && a.createStereoPanner) { const p = a.createStereoPanner(); p.pan.value = Math.max(-1, Math.min(1, pan)); node.connect(p); node = p; }
+  node.connect(bus === 'music' ? AU.music : AU.sfx);
+  if (verb) { const s = a.createGain(); s.gain.value = verb; node.connect(s).connect(AU.verb); }
 }
-function noise(d, v = .2, f = 900, f2 = null) {
-  const a = ac(); if (!a || S.muted) return;
-  const t = a.currentTime, len = Math.floor(a.sampleRate * d), buf = a.createBuffer(1, len, a.sampleRate), ch = buf.getChannelData(0);
-  for (let i = 0; i < len; i++) ch[i] = Math.random() * 2 - 1;
-  const s = a.createBufferSource(); s.buffer = buf;
-  const fl = a.createBiquadFilter(); fl.type = 'lowpass'; fl.frequency.setValueAtTime(f, t); if (f2) fl.frequency.exponentialRampToValueAtTime(f2, t + d);
-  const g = a.createGain(); g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(.0001, t + d);
-  s.connect(fl).connect(g).connect(a.destination); s.start(t);
+function osc(o) {
+  const a = ac(); if (!a || !busOn(o.bus)) return;
+  const t = o.time != null ? o.time : a.currentTime + (o.at || 0), dur = o.dur || .2;
+  const v = a.createOscillator(); v.type = o.type || 'sine';
+  const f = o.f * (o.vary === false ? 1 : 1 + (Math.random() - .5) * .03);
+  v.frequency.setValueAtTime(f, t); if (o.f2) v.frequency.exponentialRampToValueAtTime(o.f2, t + dur);
+  if (o.vib) { const l = a.createOscillator(), lg2 = a.createGain(); l.frequency.value = 6; lg2.gain.value = o.vib; l.connect(lg2).connect(v.frequency); l.start(t); l.stop(t + dur + .05); }
+  route(a, v, { ...o, t, dur, vol: o.vol || .1 });
+  v.start(t); v.stop(t + dur + .05);
 }
-let lastCrack = 0;
+function nz(o) {
+  const a = ac(); if (!a || !busOn(o.bus)) return;
+  const t = o.time != null ? o.time : a.currentTime + (o.at || 0), dur = o.dur || .2;
+  const src = a.createBufferSource(); src.buffer = AU.noise;
+  route(a, src, { ...o, t, dur, vol: o.vol || .1, attack: o.attack || .002 });
+  src.start(t, Math.random() * 1.5, dur + .05);
+}
+const last = {};
+const throttle = (key, ms) => { const n = performance.now(); if (n - (last[key] || 0) < ms) return true; last[key] = n; return false; };
+const PENTA = [0, 2, 4, 7, 9];
+const penta = (i, base) => base + PENTA[i % 5] + 12 * Math.floor(i / 5);
+let collectStep = 0;
 const sfx = {
-  swap() { tone(440, .08, 'triangle', .08, 660); },
-  bad() { tone(220, .12, 'square', .05, 150); tone(220, .12, 'square', .05, 150, .13); },
-  pop(chain) { const f = 520 * Math.pow(1.12, Math.min(chain, 10)); tone(f, .14, 'sine', .14, f * 1.5); tone(f * 2, .08, 'triangle', .04); },
-  special() { tone(660, .12, 'triangle', .1, 990); tone(990, .16, 'sine', .08, 1320, .08); },
-  rocket() { noise(.35, .12, 3000, 400); },
-  boom() { noise(.5, .35, 600, 60); tone(90, .35, 'sine', .25, 40); },
-  zap() { tone(1400, .25, 'sawtooth', .04, 300); noise(.2, .06, 6000, 1500); },
-  whoosh() { noise(.3, .08, 1800, 600); },
-  crack() { const n = performance.now(); if (n - lastCrack < 50) return; lastCrack = n; noise(.12, .15, 1500, 500); },
-  win() { [523, 659, 784, 1046].forEach((f, i) => tone(f, .25, 'triangle', .12, null, i * .11)); },
-  lose() { [392, 330, 262].forEach((f, i) => tone(f, .3, 'triangle', .1, null, i * .16)); },
-  coin() { tone(988, .08, 'square', .05); tone(1318, .2, 'square', .05, null, .07); },
-  build() { [392, 523, 659, 784, 1046].forEach((f, i) => tone(f, .18, 'triangle', .1, null, i * .07)); },
+  click() { osc({ f: 1300, f2: 700, type: 'triangle', dur: .05, vol: .05, verb: 0 }); },
+  select() { osc({ f: midi(79), type: 'triangle', dur: .1, vol: .08 }); osc({ f: midi(86), dur: .14, vol: .04, at: .035 }); },
+  swap() { nz({ dur: .14, vol: .07, bp: [500, 2800], q: 1.4, verb: 0 }); osc({ f: 480, f2: 760, type: 'triangle', dur: .09, vol: .05, verb: 0 }); },
+  bad() { osc({ f: 330, f2: 210, dur: .3, vol: .15, vib: 20 }); osc({ f: 165, f2: 105, type: 'triangle', dur: .32, vol: .07 }); },
+  pop(chain) {
+    const n = penta(Math.min(chain - 1, 9) + 2, 67);
+    osc({ f: midi(n) * 2.4, f2: midi(n) * .8, dur: .08, vol: .2, verb: 0 });       // bubbly "bloop"
+    osc({ f: midi(n), type: 'triangle', dur: .4, vol: .11, at: .015, verb: .45 });  // a note that climbs with the combo
+    osc({ f: midi(n + 12), dur: .3, vol: .045, at: .03, verb: .6 });
+    nz({ dur: .035, vol: .1, hp: 3500, verb: 0 });
+  },
+  land(dist) { if (throttle('land', 70)) return; nz({ dur: .07, vol: Math.min(.09, .03 + dist * .012), lp: 450, verb: 0 }); osc({ f: 150, f2: 85, dur: .08, vol: .05, verb: 0 }); },
+  special() {
+    [0, 4, 7, 12].forEach((st, i) => osc({ f: midi(76 + st), type: 'triangle', dur: .3, vol: .085, at: i * .05, verb: .6 }));
+    nz({ dur: .5, vol: .05, hp: [5000, 9000], verb: .7 });
+  },
+  rocket(pan = 0) { nz({ dur: .5, vol: .16, bp: [300, 5200], q: 2, pan }); osc({ f: 180, f2: 1300, type: 'sawtooth', dur: .32, vol: .035, lp: 2200, pan, verb: .2 }); },
+  boom() {
+    osc({ f: 140, f2: 32, dur: .7, vol: .5, verb: .1 });
+    nz({ dur: .9, vol: .42, lp: [1800, 70], verb: .35 });
+    nz({ dur: .2, vol: .14, hp: 4000, at: .01 });
+    for (let i = 0; i < 7; i++) nz({ dur: .03, vol: .07, bp: 2600, q: 3, at: .12 + Math.random() * .5, pan: Math.random() * 1.4 - .7, verb: .3 });
+  },
+  zap() {
+    [0, 4, 7, 12, 16, 19, 24].forEach((st, i) => osc({ f: midi(81 + st), dur: .2, vol: .055, at: i * .035, verb: .7, pan: (i / 3 - 1) * .5 }));
+    osc({ f: 2400, f2: 260, type: 'sawtooth', dur: .4, vol: .03, lp: 3200 });
+  },
+  whoosh() { // propeller take-off
+    for (let i = 0; i < 9; i++) nz({ dur: .05, vol: .06, bp: 700 + i * 220, q: 4, at: i * .035, verb: .1 });
+    osc({ f: 260, f2: 900, type: 'square', dur: .35, vol: .025, lp: 1400 });
+  },
+  crack(kind = 'crate') {
+    if (throttle('crack' + kind, 45)) return;
+    if (kind === 'stone') { nz({ dur: .16, vol: .26, bp: 420, q: 2 }); nz({ dur: .06, vol: .12, hp: 3200 }); osc({ f: 95, f2: 55, dur: .14, vol: .12, verb: 0 }); }
+    else { nz({ dur: .1, vol: .24, bp: 750, q: 5 }); osc({ f: 190, f2: 120, type: 'triangle', dur: .11, vol: .12, verb: .05 }); }
+  },
+  ice() {
+    if (throttle('ice', 45)) return;
+    [2093, 3136, 2637].forEach((f, i) => osc({ f, dur: .3, vol: .055, at: i * .028, verb: .7 }));
+    nz({ dur: .14, vol: .12, hp: 5200 });
+  },
+  collect() { if (throttle('collect', 45)) return; const n = penta(collectStep++ % 10, 79); osc({ f: midi(n), dur: .2, vol: .06, verb: .5 }); osc({ f: midi(n) * 2, type: 'triangle', dur: .08, vol: .025 }); },
+  coin() { osc({ f: midi(83), type: 'square', dur: .07, vol: .045, lp: 4000, verb: 0 }); osc({ f: midi(88), type: 'square', dur: .28, vol: .045, at: .07, lp: 4000, verb: .4 }); },
+  star(i) {
+    const b = [76, 79, 84][i] || 84;
+    [0, 4, 7].forEach((st, k) => osc({ f: midi(b + st), type: 'triangle', dur: .55, vol: .08, at: k * .03, verb: .7 }));
+    nz({ dur: .35, vol: .04, hp: 8000, verb: .8 });
+  },
+  win() {
+    const brass = (n, at, dur) => { osc({ f: midi(n), type: 'sawtooth', dur, vol: .08, at, lp: 2400, attack: .03, vary: false, verb: .35 }); osc({ f: midi(n - 12), type: 'square', dur, vol: .03, at, lp: 1400, attack: .03, vary: false }); };
+    [[60, 0, .14], [64, .13, .14], [67, .26, .14], [72, .39, .7]].forEach(([n, at, d]) => brass(n, at, d));
+    [60, 64, 67, 72, 76].forEach(n => osc({ f: midi(n), type: 'triangle', dur: 1.1, vol: .05, at: .55, vary: false, verb: .6 }));
+    nz({ dur: .25, vol: .1, hp: 6000, at: .39, verb: .5 });
+  },
+  lose() { [[67, 0, .28], [66, .3, .28], [65, .6, .28], [64, .9, .9]].forEach(([n, at, d], i) => osc({ f: midi(n - 12), type: 'sawtooth', dur: d, vol: .07, at, lp: 1100, attack: .03, vib: i === 3 ? 7 : 0, vary: false, verb: .3 })); },
+  build() {
+    for (let i = 0; i < 3; i++) { nz({ dur: .08, vol: .2, bp: 900, q: 6, at: i * .14 }); osc({ f: 220, f2: 140, type: 'triangle', dur: .08, vol: .1, at: i * .14, verb: .1 }); }
+    [72, 76, 79, 84].forEach((n, i) => osc({ f: midi(n), type: 'triangle', dur: .4, vol: .08, at: .45 + i * .07, verb: .6 }));
+  },
+  clang() { [1, 2.76, 5.4, 8.9].forEach(m => osc({ f: 360 * m, dur: .7 / Math.sqrt(m), vol: .09 / m, verb: .4 })); nz({ dur: .05, vol: .22, hp: 2500 }); osc({ f: 110, f2: 60, dur: .15, vol: .15, verb: 0 }); },
+  shuffle() { for (let i = 0; i < 10; i++) nz({ dur: .09, vol: .07, bp: 600 + i * 260, q: 3, at: i * .04, pan: Math.sin(i * 1.3) * .7, verb: .2 }); },
+  tick() { osc({ f: 880, type: 'square', dur: .05, vol: .035, lp: 2600, verb: 0 }); },
+  blab(n = 5) { for (let i = 0; i < n; i++) osc({ f: midi(60 + Math.floor(Math.random() * 9)), type: 'square', dur: .055, vol: .022, at: i * .075, lp: 1300, verb: .1 }); },
 };
+
+/* ---------- music: a short lute-and-drum loop in D dorian ---------- */
+// One entry per eighth note; null = rest. Eight bars, then it loops with a harmony line added.
+const MELODY = [
+  74, null, 77, 81, 79, 77, 76, 74,   76, null, 79, 84, 83, 81, 79, null,
+  77, null, 81, 86, 84, 81, 77, 81,   79, 77, 76, 72, 74, null, null, null,
+  81, null, 84, 81, 77, null, 81, 84,  79, null, 76, 72, 76, 79, 84, null,
+  86, 84, 81, 77, 79, 81, 77, 76,     74, null, 69, null, 74, null, null, null,
+];
+const BASS = [50, 48, 50, 45, 41, 48, 50, 50];
+const MUSIC = { on: false, timer: 0, next: 0, step: 0 };
+function lute(n, time, vol) {
+  osc({ f: midi(n), type: 'triangle', dur: .42, vol, time, lp: 2600, attack: .004, bus: 'music', verb: .35, vary: false });
+  osc({ f: midi(n + 12), dur: .16, vol: vol * .35, time, bus: 'music', verb: .2, vary: false });
+}
+function scheduleMusic() {
+  const a = AU.ctx; if (!a) return;
+  const eighth = 60 / 104 / 2;
+  while (MUSIC.next < a.currentTime + .2) {
+    const i = MUSIC.step % 64, loop = Math.floor(MUSIC.step / 64), t = MUSIC.next, bar = Math.floor(i / 8), beat = i % 8;
+    const m = MELODY[i];
+    if (m) { lute(m, t, .05); if (loop % 2) lute(m - 5, t, .025); }
+    if (beat === 0 || beat === 4) {
+      const root = BASS[bar] + (beat === 4 ? 7 : 0);
+      osc({ f: midi(root), type: 'triangle', dur: .5, vol: .07, time: t, lp: 900, bus: 'music', verb: .1, vary: false });
+      nz({ dur: .09, vol: .05, lp: 220, time: t, bus: 'music', verb: 0 }); // soft drum
+    }
+    if (beat === 2 || beat === 6) nz({ dur: .06, vol: .025, hp: 7000, time: t, bus: 'music', verb: .2 }); // tambourine
+    MUSIC.step++; MUSIC.next += eighth;
+  }
+}
+function startMusic() {
+  const a = ac(); if (!a || !S.music || MUSIC.on) return;
+  MUSIC.on = true; MUSIC.next = a.currentTime + .1;
+  MUSIC.timer = setInterval(scheduleMusic, 40);
+}
+function stopMusic() { MUSIC.on = false; clearInterval(MUSIC.timer); }
+// First touch anywhere unlocks audio (browsers require a gesture) and starts the music.
+document.addEventListener('pointerdown', () => { ac(); startMusic(); }, true);
+document.addEventListener('click', e => { if (e.target.closest && e.target.closest('button')) sfx.click(); }, true);
+document.addEventListener('visibilitychange', () => {
+  if (!AU.ctx) return;
+  if (document.hidden) AU.ctx.suspend(); else AU.ctx.resume();
+});
 
 /* =========================================================
    Tweens & timing
@@ -862,7 +1010,7 @@ function clearTile(r, c, to = null) {
 }
 function hitBlocker(r, c) {
   const cell = G.grid[r][c], b = cell.b; if (!b) return;
-  b.hp--; sfx.crack();
+  b.hp--; sfx.crack(b.t);
   const col = b.t === 'crate' ? '#c88a4e' : '#aab0c2';
   burst(r, c, col, b.hp <= 0 ? 12 : 6, 'chip'); burst(r, c, b.t === 'crate' ? '#7a4a22' : '#6c7286', 4, 'chip');
   shove(r, c, 2.2, 1.6);
@@ -875,7 +1023,7 @@ function hitBlocker(r, c) {
 }
 function hitIce(r, c) {
   const cell = G.grid[r][c]; if (!cell.ice) return;
-  cell.ice = 0; sfx.crack(); burst(r, c, '#d8f4ff', 12, 'chip'); burst(r, c, '#ffffff', 4, 'star');
+  cell.ice = 0; sfx.ice(); burst(r, c, '#d8f4ff', 12, 'chip'); burst(r, c, '#ffffff', 4, 'star');
   kick(cell.tile, 0, -2.5, 3);
   const goal = goalFor('ice'); if (goal) { goal.left--; flyToGoal(goal, r, c); }
   const d = { r, c, s: 1, a: 1 }; G.dyingIce.push(d);
@@ -918,7 +1066,7 @@ async function fire(r, c, t, opt = {}) {
   }
 }
 async function rocketLine(r, c, dir, ctx) {
-  sfx.rocket();
+  sfx.rocket((c / Math.max(1, G.cols - 1) * 2 - 1) * .6);
   const n = dir === 'h' ? G.cols : G.rows, step = 30;
   G.fx.push(rocketFx(r, c, dir));
   const ps = [];
@@ -1015,7 +1163,7 @@ function consume(t) { if (!G.dying.includes(t)) { G.dying.push(t); tween(t, { s:
    Turn flow
    ========================================================= */
 function useMove() {
-  G.moves--; updateHud();
+  G.moves--; updateHud(); if (G.moves <= 5 && G.moves > 0) sfx.tick();
   const b = $('#moves'); b.classList.remove('tick'); void b.offsetWidth; b.classList.add('tick');
 }
 async function trySwap(r1, c1, r2, c2) {
@@ -1163,7 +1311,7 @@ function animateFall(mv, stagger = 14) {
     return delay(c * stagger).then(() => {
       t.falling = true;
       return tween(t, { x: c, y: r }, 90 + 80 * Math.sqrt(d), easeIn);
-    }).then(() => { t.falling = false; kick(t, 0, -Math.min(4, 1 + d * .7), Math.min(7, 2.5 + d)); });
+    }).then(() => { t.falling = false; kick(t, 0, -Math.min(4, 1 + d * .7), Math.min(7, 2.5 + d)); sfx.land(d); });
   }));
 }
 // New level: every piece drops in from above, column by column.
@@ -1192,7 +1340,7 @@ async function endTurn() {
   G.busy = false; scheduleHint();
 }
 async function shuffleBoard() {
-  banner('Shuffle!'); await delay(400);
+  banner('Shuffle!'); sfx.shuffle(); await delay(400);
   const cells = [];
   for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) { const t = G.grid[r][c].tile; if (t && !t.sp && !G.grid[r][c].b && !G.grid[r][c].ice) cells.push(t); }
   await Promise.all(cells.map(t => tween(t, { s: .2 }, 200, easeIn)));
@@ -1285,7 +1433,7 @@ async function applyBooster(r, c) {
   S.boosters[id]--; save(); updateBoosters();
   G.busy = true; clearHint(); G.chain = 0;
   const ctx = { seen: new Set() };
-  if (id === 'hammer') { G.shake = 5; sfx.boom(); hitCell(r, c, ctx); }
+  if (id === 'hammer') { G.shake = 5; sfx.clang(); hitCell(r, c, ctx); }
   else { hitCell(r, c, ctx); await rocketLine(r, c, id === 'arrow' ? 'h' : 'v', ctx); }
   await flush(); await cascade(); await endTurn();
 }
@@ -1480,6 +1628,7 @@ function kingSay(text, mood = 'happy', ms = 2200, prio = 0) {
   const now = performance.now();
   if (now < KING.until && prio < KING.prio) return;
   KING.mood = mood; KING.until = now + ms; KING.prio = prio;
+  if ($('#kingText').textContent !== text && prio >= 1) sfx.blab(Math.min(7, 3 + Math.floor(text.length / 14)));
   setKingText(text, true);
 }
 const GOAL_NAMES = { crate: 'crates', stone: 'stones', ice: 'ice blocks' };
@@ -1664,7 +1813,7 @@ function renderFx(now) {
     if (p < 0) continue;
     if (p >= 1) {
       flyers.splice(i, 1);
-      if (G && G.goals.includes(f.goal)) { f.goal.shown = Math.max(f.goal.left, f.goal.shown - 1); renderGoalCounts(f.goal); }
+      if (G && G.goals.includes(f.goal)) { f.goal.shown = Math.max(f.goal.left, f.goal.shown - 1); renderGoalCounts(f.goal); sfx.collect(); }
       continue;
     }
     const e = easeIO(p), cx = (f.x0 + f.x1) / 2 + (f.x0 < f.x1 ? -60 : 60), cy = Math.min(f.y0, f.y1) - 40;
@@ -1758,7 +1907,7 @@ function onTap(r, c) {
     if (Math.abs(sr - r) + Math.abs(sc - c) === 1) { G.sel = null; trySwap(sr, sc, r, c); return; }
   }
   if (cell.tile.sp) { tapSpecial(r, c); return; }
-  G.sel = [r, c]; sfx.swap(); kick(cell.tile, 0, -2, 4);
+  G.sel = [r, c]; sfx.select(); kick(cell.tile, 0, -2, 4);
 }
 
 /* =========================================================
@@ -1788,6 +1937,7 @@ function showWin(stars, coins, firstClear) {
     <p>+${coins} coins${firstClear ? ' · new stars for the castle' : ''}</p>
     <div class="row"><button class="btn ghost" data-a="map">Map</button>${G.n < LEVEL_COUNT ? '<button class="btn green" data-a="next">Next level</button>' : ''}</div>`);
   sfx.coin();
+  for (let i = 0; i < stars; i++) setTimeout(() => sfx.star(i), 300 + i * 250);
   card.querySelector('[data-a=map]').onclick = () => { closeModal(); toMap(); };
   const nx = card.querySelector('[data-a=next]'); if (nx) nx.onclick = () => { closeModal(); openLevel(G.n + 1); };
 }
@@ -1814,7 +1964,6 @@ function buildMap() {
   if ($('#map').hidden) return;
   $('#starCount').textContent = starBalance(); $('#coinCount').textContent = S.coins;
   $('#playBtn').textContent = 'Level ' + S.unlocked;
-  $('#muteBtn').textContent = S.muted ? 'Unmute' : 'Mute';
   const scroll = $('#mapScroll'), inner = $('#mapInner'), W = scroll.clientWidth, gap = 92;
   const H = LEVEL_COUNT * gap + 80; inner.style.height = H + 'px';
   inner.querySelectorAll('.node, .sign').forEach(n => n.remove());
@@ -1885,7 +2034,17 @@ function drawMapDecor(W, H, pts) {
   }
 }
 $('#playBtn').onclick = () => openLevel(S.unlocked);
-$('#muteBtn').onclick = () => { S.muted = !S.muted; save(); $('#muteBtn').textContent = S.muted ? 'Unmute' : 'Mute'; if (!S.muted) sfx.coin(); };
+function openSound() {
+  const label = (on, name) => `${name}: ${on ? 'On' : 'Off'}`;
+  const card = modal(`<h3>Sound</h3><p>Turn on your phone’s sound to hear the game.</p>
+    <div class="row"><button class="btn ${S.music ? 'green' : 'ghost'}" data-a="music">${label(S.music, 'Music')}</button></div>
+    <div class="row"><button class="btn ${S.sfx ? 'green' : 'ghost'}" data-a="sfx">${label(S.sfx, 'Sound effects')}</button></div>
+    <div class="row"><button class="btn" data-a="done">Done</button></div>`);
+  card.querySelector('[data-a=music]').onclick = () => { S.music = !S.music; save(); if (S.music) startMusic(); else stopMusic(); openSound(); };
+  card.querySelector('[data-a=sfx]').onclick = () => { S.sfx = !S.sfx; save(); if (S.sfx) sfx.coin(); openSound(); };
+  card.querySelector('[data-a=done]').onclick = closeModal;
+}
+$('#soundBtn').onclick = openSound;
 
 /* =========================================================
    Castle meta
