@@ -87,6 +87,10 @@ button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
 .node.locked { background: radial-gradient(circle at 35% 30%, #8a8fa8, #4b4f66 70%); box-shadow: 0 5px 0 #2c2f40, inset 0 0 0 3px rgba(255,255,255,.15); color: rgba(255,255,255,.55); cursor: default; }
 .node.current { animation: bob 1.2s ease-in-out infinite; z-index: 2; }
 .node.current::after { content: ''; position: absolute; inset: -9px; border-radius: 50%; border: 3px solid var(--gold); opacity: .8; }
+.node.hard:not(.locked):not(.done) { background: radial-gradient(circle at 35% 30%, #ff8a8f, #b3121f 70%); box-shadow: 0 5px 0 #6a0a15, 0 8px 14px rgba(0,0,0,.4), inset 0 0 0 3px rgba(255,255,255,.35); }
+.node.hard::before { content: 'HARD'; position: absolute; left: 50%; bottom: -24px; transform: translateX(-50%); font-family: var(--body); font-weight: 900; font-size: 10px; letter-spacing: .08em; padding: 1px 6px; border-radius: 6px; background: var(--ruby); color: #fff; text-shadow: none; box-shadow: 0 2px 0 #6a0a15; }
+.hard-tag { display: inline-block; font-weight: 900; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; padding: 3px 10px; border-radius: 8px; background: var(--ruby); color: #fff; box-shadow: 0 2px 0 #6a0a15; }
+.bubble small.hard { color: var(--ruby); }
 .node .stars { position: absolute; left: 50%; top: -16px; transform: translateX(-50%); display: flex; gap: 1px; }
 .node .stars i { width: 15px; height: 15px; display: block; clip-path: polygon(50% 0, 62% 35%, 100% 38%, 70% 60%, 80% 98%, 50% 76%, 20% 98%, 30% 60%, 0 38%, 38% 35%); background: rgba(0,0,0,.35); }
 .node .stars i.on { background: var(--gold); }
@@ -316,8 +320,8 @@ function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let
 const F = '........';
 // layout legend: . tile   # hole   C crate   D double crate   S stone (2 hits)   I frozen tile
 const HAND = [
-  { m: 20, k: 4, g: [[0, 12]], L: [F, F, F, F, F, F, F, F, F] },
-  { m: 22, k: 4, g: [[1, 15], [2, 15]], L: ['#......#', F, F, F, F, F, F, F, '#......#'] },
+  { m: 20, k: 4, g: [[0, 20]], L: [F, F, F, F, F, F, F, F, F] },
+  { m: 22, k: 4, g: [[1, 22], [2, 22]], L: ['#......#', F, F, F, F, F, F, F, '#......#'] },
   { m: 20, k: 4, g: [], L: [F, F, F, F, 'CCCCCCCC', F, F, F, F] },
   { m: 22, k: 4, g: [[3, 15]], L: [F, F, F, '..CCCC..', '..CCCC..', '..CCCC..', F, F, F] },
   { m: 25, k: 5, g: [[0, 20], [1, 20]], L: ['##....##', '#......#', F, F, F, F, F, '#......#', '##....##'] },
@@ -337,7 +341,7 @@ function genLevel(n) {
   if (hp === 2) for (const [r, c] of [[4, 3], [4, 4]]) L[r][c] = '#';
   if (hp === 3) for (let r = 3; r <= 5; r++) { L[r][0] = '#'; L[r][7] = '#'; }
   const types = n < 16 ? ['C', 'C', 'D'] : n < 26 ? ['C', 'D', 'S'] : ['C', 'D', 'D', 'S', 'S'];
-  const want = Math.min(26, 6 + Math.floor(n * .45));
+  const want = Math.min(16, 6 + Math.floor(n * .2));
   let placed = 0, tries = 0;
   while (placed < want && tries++ < 500) {
     const r = 2 + Math.floor(R() * 7), c = Math.floor(R() * 4);
@@ -351,12 +355,24 @@ function genLevel(n) {
   }
   const k = n < 13 ? 4 : 5;
   const g = [], nG = R() < .55 ? 1 : 2;
-  while (g.length < nG) { const c = Math.floor(R() * k); if (!g.some(x => x[0] === c)) g.push([c, 14 + Math.floor(n * .35)]); }
+  while (g.length < nG) { const c = Math.floor(R() * k); if (!g.some(x => x[0] === c)) g.push([c, 12 + Math.min(12, Math.floor(n * .22))]); }
   let hpTot = 0; for (const row of L) for (const ch of row) hpTot += (ch === 'C' || ch === 'I') ? 1 : (ch === 'D' || ch === 'S') ? 2 : 0;
   const m = Math.max(20, Math.min(34, 16 + Math.round(hpTot * .32) + nG * 3 - Math.floor(n / 20)));
   return { m, k, g, L: L.map(r => r.join('')) };
 }
-function getLevel(n) { return n <= HAND.length ? HAND[n - 1] : genLevel(n); }
+// Move counts come from 50 bot playthroughs per level (see crown-quest/tools/calibrate.cjs):
+// tutorial levels are near-certain wins, normal levels ease from ~88% to ~75% bot win rate,
+// and every 5th level from 10 on is a Hard level at ~50%.
+const MOVES = [
+  15, 18, 17, 18, 23, 23, 33, 32, 28, 30,
+  20, 15, 22, 28, 20, 28, 18, 29, 28, 15,
+  20, 24, 29, 22, 22, 30, 27, 30, 26, 16,
+  25, 27, 33, 30, 17, 41, 31, 30, 35, 25,
+  28, 33, 39, 29, 26, 28, 27, 33, 33, 24,
+  42, 32, 30, 27, 26, 44, 31, 40, 31, 28,
+];
+const isHard = n => n >= 10 && n % 5 === 0;
+function getLevel(n) { const def = n <= HAND.length ? HAND[n - 1] : genLevel(n); return { ...def, m: MOVES[n - 1] || def.m, hard: isHard(n) }; }
 
 /* =========================================================
    Piece art (drawn in a unit box centred on 0,0)
@@ -581,7 +597,8 @@ function startLevel(n) {
     dying: [], dyingB: [], dyingIce: [], fx: [], parts: [], pending: new Set(), claimed: new Set(), chain: 0, shake: 0, hint: null, cs: 40, ox: 6, oy: 6 };
   fillBoard();
   show('game');
-  $('#lvlLabel').textContent = 'Level ' + n;
+  $('#lvlLabel').textContent = 'Level ' + n + (def.hard ? ' \u00b7 Hard' : '');
+  $('#lvlLabel').classList.toggle('hard', !!def.hard);
   buildGoals(); buildBoosters(); updateHud(); layout();
   scheduleHint();
   KING.until = 0; kingSay(introLine(def), 'happy', 4500, 2);
@@ -1020,7 +1037,7 @@ async function winFlow() {
       await flush(); await cascade();
     }
   }
-  const coins = 15 + left * 4;
+  const coins = (15 + left * 4) * (G.def.hard ? 2 : 1);
   const firstClear = !S.stars[G.n];
   S.stars[G.n] = Math.max(S.stars[G.n] || 0, stars);
   if (G.n >= S.unlocked) S.unlocked = Math.min(LEVEL_COUNT, G.n + 1);
@@ -1109,7 +1126,7 @@ function rocketFx(r, c, dir) {
 function ringFx(r, c, R) {
   const t0 = performance.now(), dur = 380;
   return (g, now) => {
-    const p = (now - t0) / dur; if (p > 1) return false;
+    const p = Math.max(0, (now - t0) / dur); if (p > 1) return false;
     const rad = (R + .6) * G.cs * easeOut(p);
     const grd = g.createRadialGradient(px(c), py(r), 0, px(c), py(r), rad);
     grd.addColorStop(0, `rgba(255,250,200,${.9 * (1 - p)})`); grd.addColorStop(.6, `rgba(255,160,40,${.7 * (1 - p)})`); grd.addColorStop(1, 'rgba(255,80,20,0)');
@@ -1120,7 +1137,7 @@ function ringFx(r, c, R) {
 function boltFx(r, c, targets, color) {
   const t0 = performance.now(), dur = 520;
   return (g, now) => {
-    const p = (now - t0) / dur; if (p > 1) return false;
+    const p = Math.max(0, (now - t0) / dur); if (p > 1) return false;
     g.save(); g.globalAlpha = 1 - p; g.strokeStyle = color; g.lineWidth = 3; g.shadowColor = '#fff'; g.shadowBlur = 10;
     for (const [y, x] of targets) {
       g.beginPath(); g.moveTo(px(c), py(r));
@@ -1240,6 +1257,7 @@ function renderKing(now) {
 }
 function introLine(def) {
   const all = def.L.join('');
+  if (def.hard) return 'A hard level! Save your power-ups for combos and plan every move.';
   if (all.includes('I')) return 'Brrr, ice! Frozen pieces can’t move. Match them where they sit to break them free.';
   if (all.includes('S')) return 'Stones take two hits. Power-ups smash them fastest!';
   if (all.includes('C') || all.includes('D')) return 'Crates in the way! Make matches right next to them to smash them.';
@@ -1351,11 +1369,14 @@ function renderFx(now) {
   }
 }
 function frame(now) {
-  const dt = Math.min(50, now - lastNow); lastNow = now;
-  stepTweens(now);
-  if (G && !$('#game').hidden) { renderBoard(now, dt); renderKing(now); }
-  renderFx(now);
+  // Schedule first: a drawing error must never stop the game loop.
   requestAnimationFrame(frame);
+  const dt = Math.max(0, Math.min(50, now - lastNow)); lastNow = now;
+  stepTweens(now);
+  try {
+    if (G && !$('#game').hidden) { renderBoard(now, dt); renderKing(now); }
+    renderFx(now);
+  } catch (e) { console.error(e); }
 }
 
 /* ---------- HUD ---------- */
@@ -1442,7 +1463,7 @@ function levelGoals(n) {
 function openLevel(n) {
   ac();
   const { def, goals } = levelGoals(n);
-  const card = modal(`<h3>Level ${n}</h3><p>Clear these before your ${def.m} moves run out.</p>${goalIconsHtml(goals)}<div class="row"><button class="btn ghost" data-a="close">Not now</button><button class="btn green" data-a="play">Play</button></div>`);
+  const card = modal(`<h3>Level ${n}</h3>${def.hard ? '<span class="hard-tag">Hard level</span>' : ''}<p>Clear these before your ${def.m} moves run out.${def.hard ? ' Win for double coins!' : ''}</p>${goalIconsHtml(goals)}<div class="row"><button class="btn ghost" data-a="close">Not now</button><button class="btn green" data-a="play">Play</button></div>`);
   fillGoalIcons(card, goals);
   card.querySelector('[data-a=close]').onclick = closeModal;
   card.querySelector('[data-a=play]').onclick = () => { closeModal(); startLevel(n); };
@@ -1488,9 +1509,9 @@ function buildMap() {
     pts.push([x, y]);
     const b = document.createElement('button');
     const st = S.stars[i] || 0, locked = i > S.unlocked;
-    b.className = 'node' + (st ? ' done' : '') + (locked ? ' locked' : '') + (i === S.unlocked ? ' current' : '');
+    b.className = 'node' + (st ? ' done' : '') + (locked ? ' locked' : '') + (i === S.unlocked ? ' current' : '') + (isHard(i) ? ' hard' : '');
     b.style.left = x + 'px'; b.style.top = y + 'px'; b.textContent = i;
-    b.setAttribute('aria-label', `Level ${i}${locked ? ', locked' : st ? `, ${st} stars` : ''}`);
+    b.setAttribute('aria-label', `Level ${i}${isHard(i) ? ', hard level' : ''}${locked ? ', locked' : st ? `, ${st} stars` : ''}`);
     if (st) { const s = document.createElement('span'); s.className = 'stars'; s.innerHTML = [1, 2, 3].map(k => `<i class="${k <= st ? 'on' : ''}"></i>`).join(''); b.appendChild(s); }
     if (!locked) b.onclick = () => openLevel(i);
     inner.appendChild(b);
