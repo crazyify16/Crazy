@@ -64,7 +64,7 @@ fs.writeFileSync(COPY, s);
     for (let n = 1; n <= T.LEVEL_COUNT; n++) {
       const used = []; let fails = 0;
       for (let k = 0; k < RUNS; k++) {
-        T.startLevel(n); const G = T.G; if (BUDGET) G.moves = BUDGET;
+        T.startLevel(n); await new Promise(r => setTimeout(r, 0)); const G = T.G; if (BUDGET) G.moves = BUDGET;
         let acts = 0;
         while (!G.over && acts < 999) {
           const m = botMove(); if (!m) break;
