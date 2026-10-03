@@ -2359,6 +2359,7 @@ function frame(now) {
   stepTweens(now);
   try {
     if (G && !$('#game').hidden) { renderBoard(now, dt); renderKing(now); }
+    if (SCN && !$('#castle').hidden && now - SCN.last > (REDUCED ? 1000 : 33)) renderScene(now);
     renderFx(now);
   } catch (e) { console.error(e); }
 }
@@ -2653,16 +2654,107 @@ function renderCastle() {
   if (starBalance() === 0 && !areaDone(viewArea)) { const p = document.createElement('div'); p.className = 'task'; p.innerHTML = '<span style="color:var(--muted)">Win levels to earn stars, then spend them here.</span>'; list.appendChild(p); }
   drawScene();
 }
+// The castle scene is baked once into a static layer; only the moving parts are redrawn each frame.
+let SCN = null;
 function drawScene() {
   const cv = $('#scene'), w = cv.clientWidth || 320, h = w * .625;
-  cv.width = Math.round(w * DPR); cv.height = Math.round(h * DPR);
-  const g = cv.getContext('2d'); g.setTransform(DPR * w / 320, 0, 0, DPR * h / 200, 0, 0); SS = DPR * w / 320;
-  const done = S.tasks[viewArea] || [], keys = AREAS[viewArea].tasks.map(t => t[0]);
-  // things not built yet show as faint ghosts of what's coming
-  const item = (key, fn) => { const on = done[keys.indexOf(key)]; g.save(); g.globalAlpha = on ? 1 : .2; fn(); g.restore(); };
-  SCENES[viewArea](g, item);
-  const built = done.filter(Boolean).length;
-  obj(g, viewArea === 0 ? 92 : 64, 152, 76, g => drawKing(g, areaDone(viewArea) ? 'cheer' : built ? 'happy' : 'worried', 500));
+  cv.width = Math.round(w * DPR); cv.height = Math.round(h * DPR); SS = DPR * w / 320;
+  const done = S.tasks[viewArea] || [], keys = AREAS[viewArea].tasks.map(t => t[0]), anims = [];
+  const bg = bake(0, 0, 320, 200, g => {
+    // things not built yet show as faint ghosts of what's coming
+    const item = (key, fn) => { const on = done[keys.indexOf(key)]; g.save(); g.globalAlpha = on ? 1 : .2; fn(); g.restore(); };
+    const anim = fn => anims.push({ fn, alpha: g.globalAlpha });
+    SCENES[viewArea](g, item, anim);
+  });
+  const built = done.filter(Boolean).length, mood = areaDone(viewArea) ? 'cheer' : built ? 'happy' : 'worried';
+  const cx = viewArea === 0 ? 92 : 64, cy = 152, k = 76;
+  const pose = t => bake(cx - k * .62, cy - k * .64, k * 1.24, k * 1.26, g => obj(g, cx, cy, k, g => drawKing(g, mood, t)));
+  SCN = { bg, anims, poses: [pose(500), pose(3450)], mood, k, last: 0 };
+  renderScene(performance.now());
+}
+function renderScene(now) {
+  if (!SCN) return;
+  const cv = $('#scene'), g = cv.getContext('2d'); SCN.last = now;
+  g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cv.width, cv.height); g.drawImage(SCN.bg.cv, 0, 0);
+  g.setTransform(SS, 0, 0, SS, 0, 0);
+  for (const a of SCN.anims) { g.save(); g.globalAlpha = a.alpha; a.fn(g, now); g.restore(); }
+  const c = SCN.poses[now % 3400 < 120 ? 1 : 0], k = SCN.k;   // the host bobs, blinks, and bounces when cheering
+  const dy = SCN.mood === 'cheer' ? -Math.abs(Math.sin(now / 140)) * .06 * k : Math.sin(now / 500) * .012 * k;
+  g.drawImage(c.cv, c.x0, c.y0 + dy, c.w, c.h);
+}
+// Draw part of the stage once into its own canvas (stage units x0,y0,w,h).
+function bake(x0, y0, w, h, fn) {
+  const cv = document.createElement('canvas'); cv.width = Math.max(1, Math.ceil(w * SS)); cv.height = Math.max(1, Math.ceil(h * SS));
+  const c = cv.getContext('2d'); c.setTransform(SS, 0, 0, SS, -x0 * SS, -y0 * SS); fn(c);
+  return { cv, x0, y0, w, h };
+}
+const sceneSprites = new Map();
+function drawSprite(g, key, x, y, size, sy = 1, alpha = 1) {
+  const id = key + size + HALLOWEEN + SS; let c = sceneSprites.get(id);
+  if (!c) { c = bake(-size / 2, -size / 2, size, size, g => obj(g, 0, 0, size, g => art(key)(g))).cv; sceneSprites.set(id, c); }
+  g.save(); g.globalAlpha *= alpha; g.translate(x, y); g.scale(1, sy); g.drawImage(c, -size / 2, -size / 2, size, size); g.restore();
+}
+function flyingBat(g, now, cx, cy, rx, ry, speed, phase, size) {
+  const t = now / speed + phase;
+  drawSprite(g, 'k0', cx + Math.cos(t) * rx, cy + Math.sin(t * 2) * ry, size, .5 + .5 * Math.abs(Math.sin(now / 70 + phase)));  // wings flap
+}
+function flame(g, x, y, s, f, H) {
+  const h = s * 2.6 * f, gr = g.createLinearGradient(0, y - h, 0, y + s * .5);
+  gr.addColorStop(0, H ? 'rgba(160,255,90,0)' : 'rgba(255,120,30,0)'); gr.addColorStop(.35, H ? '#7be04a' : '#ff8a1f'); gr.addColorStop(.75, H ? '#d9ffb0' : '#ffd24d'); gr.addColorStop(1, '#fffbe0');
+  g.fillStyle = gr; g.beginPath(); g.moveTo(x, y - h); g.quadraticCurveTo(x + s, y - s * .3, x, y + s * .5); g.quadraticCurveTo(x - s, y - s * .3, x, y - h); g.fill();
+}
+const flick = (now, seed) => 1 + Math.sin(now / 70 + seed * 1.7) * .14 + Math.sin(now / 27 + seed) * .08;
+function lightGlow(g, x, y, r, color) { g.save(); g.globalCompositeOperation = 'lighter'; glowAt(g, x, y, r, color); g.restore(); }
+function fountainWater(g, now, H) {
+  const col = H ? '180,255,140' : '215,238,255';
+  g.lineCap = 'round';
+  for (const sd of [-1, 1]) for (const [x0, y0, cx, cy, x1, y1] of [[0, -.36, .18, -.6, .32, .02], [.12, -.31, .22, -.42, .26, .02]]) {
+    const X0 = sd * x0, CX = sd * cx, X1 = sd * x1;
+    g.strokeStyle = `rgba(${col},.55)`; g.lineWidth = .032; g.setLineDash([.06, .05]); g.lineDashOffset = -now / 300;
+    g.beginPath(); g.moveTo(X0, y0); g.quadraticCurveTo(CX, cy, X1, y1); g.stroke(); g.setLineDash([]);
+    for (let k = 0; k < 4; k++) { // droplets riding the arc
+      const t = (now / 900 + k / 4 + (sd > 0 ? .12 : 0)) % 1, u = 1 - t;
+      g.fillStyle = `rgba(${col},.95)`; g.beginPath(); g.arc(u * u * X0 + 2 * u * t * CX + t * t * X1, u * u * y0 + 2 * u * t * cy + t * t * y1, .02, 0, 7); g.fill();
+    }
+  }
+  for (let k = 0; k < 3; k++) { const p = (now / 1600 + k / 3) % 1; g.strokeStyle = `rgba(${col},${.6 * (1 - p)})`; g.lineWidth = .015; g.beginPath(); g.ellipse(0, .06, .08 + p * .3, .02 + p * .075, 0, 0, 7); g.stroke(); }
+}
+function wavingFlag(g, now, seed, H) {
+  const P = H ? FLAG_H : FLAG, top = [], bot = [];
+  for (let i = 0; i <= 10; i++) { const u = i / 10, w = Math.sin(now / 160 - u * 5 + seed) * .08 * u; top.push([-.5 + u, -.3 + w + u * .05]); bot.push([-.5 + u, .3 + w - u * .05]); }
+  g.beginPath(); top.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y)); for (let i = bot.length - 1; i >= 0; i--) g.lineTo(bot[i][0], bot[i][1]); g.closePath();
+  g.fillStyle = lg(g, 0, -.3, 0, .3, [[0, P.light], [.5, P.base], [1, P.dark]]); g.fill();
+  g.save(); g.clip(); // folds catch the light as they ripple
+  for (let i = 0; i < 10; i++) { const u = (i + .5) / 10, c = Math.cos(now / 160 - u * 5 + seed); g.fillStyle = c > 0 ? `rgba(255,255,255,${c * .22 * u})` : `rgba(0,0,0,${-c * .28 * u})`; g.fillRect(-.5 + i / 10, -.6, .1, 1.2); }
+  g.restore();
+}
+function clouds(g, now) {
+  for (const [x0, y, s, sp] of [[60, 30, 1, 260], [230, 22, 1.3, 330], [150, 48, .8, 200]]) {
+    const x = ((x0 + now / sp) % 400) - 40;
+    for (const [dx, dy, r] of [[-12, 2, 9], [0, -3, 12], [13, 2, 9]]) { const cg = g.createRadialGradient(x + dx * s - 3, y + dy * s - 4, 1, x + dx * s, y + dy * s, r * s); cg.addColorStop(0, '#ffffff'); cg.addColorStop(1, 'rgba(225,235,255,.9)'); g.fillStyle = cg; g.beginPath(); g.arc(x + dx * s, y + dy * s, r * s, 0, 7); g.fill(); }
+  }
+}
+function birds(g, now) {
+  g.strokeStyle = 'rgba(70,40,40,.75)'; g.lineWidth = 1.1; g.lineCap = 'round';
+  for (let k = 0; k < 3; k++) { const x = ((now / 55 + k * 130) % 380) - 30, y = 38 + k * 13 + Math.sin(now / 400 + k) * 3, f = Math.sin(now / 110 + k * 2) * 2.2;
+    g.beginPath(); g.moveTo(x - 4.5, y - f); g.quadraticCurveTo(x - 2, y - 1.5, x, y); g.quadraticCurveTo(x + 2, y - 1.5, x + 4.5, y - f); g.stroke(); }
+}
+function fireflies(g, now) {
+  const R = rng(77), A = g.globalAlpha; g.save(); g.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 14; i++) { const bx = R() * 320, by = 125 + R() * 60, ph = R() * 6, sp = 1500 + R() * 1500, x = bx + Math.sin(now / sp + ph) * 18, y = by + Math.cos(now / (sp * .7) + ph) * 8;
+    g.globalAlpha = A * Math.max(0, Math.sin(now / 420 + ph * 3)); glowAt(g, x, y, 5, 'rgba(170,255,90,.8)'); g.fillStyle = '#f0ffc0'; g.beginPath(); g.arc(x, y, .8, 0, 7); g.fill(); }
+  g.restore();
+}
+function butterflies(g, now) {
+  for (let k = 0; k < 3; k++) {
+    const x = 60 + k * 100 + Math.sin(now / 1700 + k) * 40, y = 132 + Math.sin(now / 900 + k * 2) * 12, flap = .25 + .75 * Math.abs(Math.sin(now / 90 + k));
+    g.save(); g.translate(x, y); g.fillStyle = ['#ff8ad8', '#ffd84d', '#8ad8ff'][k];
+    for (const sd of [-1, 1]) { g.save(); g.scale(sd * flap, 1); g.beginPath(); g.ellipse(2.4, -1.2, 2.6, 1.9, -.3, 0, 7); g.fill(); g.beginPath(); g.ellipse(1.8, 1.3, 1.7, 1.2, .3, 0, 7); g.fill(); g.restore(); }
+    g.strokeStyle = '#2a1a10'; g.lineWidth = .8; g.beginPath(); g.moveTo(0, -2.2); g.lineTo(0, 2.2); g.stroke(); g.restore();
+  }
+}
+function fog(g, now, y) {
+  for (let k = 0; k < 4; k++) { const x = ((k * 110 + now / (60 + k * 15)) % 480) - 80; const fg = g.createRadialGradient(x, y + k * 6, 2, x, y + k * 6, 90); fg.addColorStop(0, 'rgba(200,190,255,.13)'); fg.addColorStop(1, 'rgba(200,190,255,0)'); g.fillStyle = fg; g.beginPath(); g.ellipse(x, y + k * 6, 90, 16, 0, 0, 7); g.fill(); }
 }
 // ---------- Castle scenes: 320x200 stage, objects built from the same shaded 3D parts as the pieces ----------
 let SS = 1; // device pixels per stage unit, so soft shadows keep their size
@@ -2698,19 +2790,22 @@ function floorGrid(g, y0, y1, vx, n, rows, a, b) {
   }
   return xs;
 }
-function nightSky(g, h) {
+function nightSky(g, h, anim) {
   g.fillStyle = lg(g, 0, 0, 0, h, [[0, '#120a26'], [.6, '#2e1650'], [1, '#4a2266']]); g.fillRect(0, 0, 320, h);
   const R = rng(9); g.fillStyle = '#fff'; for (let i = 0; i < 40; i++) { g.globalAlpha = .3 + R() * .7; g.fillRect(R() * 320, R() * h * .8, 1, 1); } g.globalAlpha = 1;
   const mg = g.createRadialGradient(258, 34, 4, 258, 34, 60); mg.addColorStop(0, 'rgba(255,240,200,.5)'); mg.addColorStop(1, 'rgba(255,240,200,0)'); g.fillStyle = mg; g.fillRect(190, 0, 130, 100);
   const mb = g.createRadialGradient(252, 28, 2, 258, 34, 20); mb.addColorStop(0, '#fffbe8'); mb.addColorStop(1, '#f2d9a0'); g.fillStyle = mb; g.beginPath(); g.arc(258, 34, 19, 0, 7); g.fill();
   g.fillStyle = 'rgba(200,170,120,.35)'; for (const [x, y, r] of [[252, 30, 4], [264, 40, 3], [262, 26, 2]]) { g.beginPath(); g.arc(x, y, r, 0, 7); g.fill(); }
-  for (const [x, y, s] of [[60, 30, 10], [90, 46, 7], [200, 22, 8]]) obj(g, x, y, s * 2, g => art('k0')(g)); // bats
+  anim((g, now) => {
+    const R = rng(33), A = g.globalAlpha;
+    for (let i = 0; i < 12; i++) { const x = R() * 320, y = R() * h * .7, ph = R() * 6; g.globalAlpha = A * Math.max(0, Math.sin(now / 520 + ph)); twinkle(g, x, y, 2.4); }
+    g.globalAlpha = A;
+    flyingBat(g, now, 140, 40, 110, 14, 1400, 0, 16); flyingBat(g, now, 200, 30, 90, 10, 1100, 2.4, 12); flyingBat(g, now, 90, 52, 70, 12, 1700, 4.1, 11);
+  });
 }
-function daySky(g, h, top, bot) {
+function daySky(g, h, top, bot, anim) {
   g.fillStyle = lg(g, 0, 0, 0, h, [[0, top], [1, bot]]); g.fillRect(0, 0, 320, h);
-  for (const [x, y, s] of [[60, 30, 1], [230, 22, 1.3], [150, 48, .8]]) { // soft shaded clouds
-    for (const [dx, dy, r] of [[-12, 2, 9], [0, -3, 12], [13, 2, 9]]) { const cg = g.createRadialGradient(x + dx * s - 3, y + dy * s - 4, 1, x + dx * s, y + dy * s, r * s); cg.addColorStop(0, '#ffffff'); cg.addColorStop(1, 'rgba(225,235,255,.9)'); g.fillStyle = cg; g.beginPath(); g.arc(x + dx * s, y + dy * s, r * s, 0, 7); g.fill(); }
-  }
+  anim(clouds); // soft shaded clouds drifting by
 }
 function glowAt(g, x, y, r, color) { const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, color); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill(); }
 function cobwebCorner(g, x, y, s, flip) { g.save(); g.translate(x, y); g.scale(flip ? -s : s, s); g.strokeStyle = 'rgba(255,255,255,.5)'; g.lineWidth = .02;
@@ -2719,7 +2814,7 @@ function cobwebCorner(g, x, y, s, flip) { g.save(); g.translate(x, y); g.scale(f
   g.restore(); }
 
 const SCENES = [
-  (g, item) => { // Throne Room
+  (g, item, anim) => { // Throne Room
     const H = HALLOWEEN;
     g.fillStyle = H ? '#140a22' : '#3a2f5a'; g.fillRect(0, 0, 320, 134);
     bricks(g, 0, 0, 320, 134, 34, 15, H ? 270 : 252, H ? 22 : 22, H ? 12 : 30, 3);
@@ -2730,12 +2825,20 @@ const SCENES = [
     g.restore();
     g.strokeStyle = H ? '#0a0612' : '#4a3a6a'; g.lineWidth = 3; g.beginPath(); g.moveTo(160, 16); g.lineTo(160, 84); g.moveTo(136, 52); g.lineTo(184, 52); g.stroke();
     g.lineWidth = 4; g.strokeStyle = H ? '#3a2a52' : '#8a7aa8'; g.beginPath(); g.moveTo(136, 84); g.lineTo(136, 40); g.arc(160, 40, 24, Math.PI, 0); g.lineTo(184, 84); g.stroke();
-    g.fillStyle = H ? 'rgba(200,170,255,.07)' : 'rgba(255,250,220,.12)'; poly(g, [[136, 84], [184, 84], [230, 200], [90, 200]]); g.fill();
     // floor in perspective
     g.fillStyle = H ? '#1a0f24' : '#4a3018'; g.fillRect(0, 130, 320, 70);
     floorGrid(g, 132, 200, 160, 14, 6, H ? '#2a1a3a' : '#7a5230', H ? '#20132e' : '#5e3e22');
     g.fillStyle = lg(g, 0, 128, 0, 136, [[0, H ? '#3a2a52' : '#8a7aa8'], [1, H ? '#0a0612' : '#2a2040']]); g.fillRect(0, 128, 320, 6);
     const vg = g.createRadialGradient(160, 100, 60, 160, 100, 220); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,.45)'); g.fillStyle = vg; g.fillRect(0, 0, 320, 200);
+    anim((g, now) => { // the beam of light from the window shimmers, with dust drifting through it
+      const A = g.globalAlpha; g.save(); g.globalCompositeOperation = 'lighter';
+      g.globalAlpha = A * (.85 + Math.sin(now / 1300) * .15); g.fillStyle = H ? 'rgba(200,170,255,.07)' : 'rgba(255,250,220,.11)';
+      poly(g, [[136, 84], [184, 84], [230, 200], [90, 200]]); g.fill();
+      const R = rng(21);
+      for (let i = 0; i < 16; i++) { const sx = R(), sp = 6000 + R() * 6000, t = (now / sp + R()) % 1, y = 84 + t * 112, half = 24 + t * 46;
+        g.globalAlpha = A * .6 * Math.sin(t * Math.PI); g.fillStyle = H ? '#d9c2ff' : '#fff6d8'; g.beginPath(); g.arc(160 + (sx - .5) * 2 * half + Math.sin(now / 900 + i) * 3, y, .9, 0, 7); g.fill(); }
+      g.restore();
+    });
     item('carpet', () => {
       poly(g, [[146, 132], [174, 132], [204, 200], [116, 200]]); g.fillStyle = lg(g, 0, 132, 0, 200, H ? [[0, '#3a0f6a'], [1, '#6a22b0']] : [[0, '#8a0a20'], [1, '#d4203a']]); g.fill();
       g.strokeStyle = H ? '#ff9a2e' : '#ffc53d'; g.lineWidth = 2; g.beginPath(); g.moveTo(149, 132); g.lineTo(121, 200); g.moveTo(171, 132); g.lineTo(199, 200); g.stroke();
@@ -2754,7 +2857,7 @@ const SCENES = [
       obj(g, 0, -.66, .32, g => art('k2')(g));
     }));
     item('banners', () => { for (const x of [58, 262]) {
-      obj(g, x, 62, 76, g => {
+      const b = bake(x - 26, 20, 52, 82, g => obj(g, x, 62, 76, g => {
         toy(g, g => { g.beginPath(); g.moveTo(-.2, -.42); g.lineTo(.2, -.42); g.lineTo(.2, .44); g.lineTo(0, .32); g.lineTo(-.2, .44); g.closePath(); }, H ? ROOF_H : ROOF, g => {
           g.fillStyle = lg(g, -.2, 0, .2, 0, [[0, 'rgba(0,0,0,.25)'], [.3, 'rgba(255,255,255,.12)'], [.55, 'rgba(0,0,0,.15)'], [.8, 'rgba(255,255,255,.1)'], [1, 'rgba(0,0,0,.3)']]); g.fillRect(-.25, -.45, .5, .95);
           g.strokeStyle = H ? '#ff9a2e' : '#ffc53d'; g.lineWidth = .03; g.beginPath(); g.moveTo(-.16, -.42); g.lineTo(-.16, .38); g.moveTo(.16, -.42); g.lineTo(.16, .38); g.stroke();
@@ -2762,22 +2865,33 @@ const SCENES = [
         obj(g, 0, -.04, .3, g => art(H ? 'k0' : 'k2')(g));
         toy(g, g => rr(g, -.27, -.47, .54, .06, .03), H ? NIGHTIRON : GOLD3, null, null);
         for (const sd of [-1, 1]) ball3d(g, sd * .28, -.44, .045, H ? NIGHTIRON : GOLD3);
-      });
+      }));
+      anim((g, now) => { g.translate(x, 28); g.rotate(Math.sin(now / 1100 + x) * .045); g.translate(-x, -28); g.drawImage(b.cv, b.x0, b.y0, b.w, b.h); }); // gentle sway
     } });
     item('chandelier', () => {
       g.strokeStyle = H ? '#2a2038' : '#8a6a2a'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(160, 0); g.lineTo(160, 14); g.stroke();
-      for (const x of [134, 147, 160, 173, 186]) glowAt(g, x, 12, 14, 'rgba(255,200,100,.35)');
       obj(g, 160, 22, 70, g => {
         toy(g, g => { g.beginPath(); g.ellipse(0, 0, .42, .08, 0, 0, 7); g.ellipse(0, 0, .32, .045, 0, 0, 7, true); }, H ? NIGHTIRON : GOLD3, null, null);
         for (const x of [-.37, -.18, 0, .18, .37]) { toy(g, g => rr(g, x - .025, -.16, .05, .14, .015), { light: '#ffffff', base: '#f2ead8', dark: '#b8ab88', line: '#5a5040' }, null, null);
-          g.fillStyle = H ? '#9bff5a' : '#ffb02e'; g.beginPath(); g.ellipse(x, -.2, .018, .035, 0, 0, 7); g.fill(); g.fillStyle = '#fff7c0'; g.beginPath(); g.ellipse(x, -.19, .008, .016, 0, 0, 7); g.fill(); }
+        }
       });
+      anim((g, now) => [-.37, -.18, 0, .18, .37].forEach((ux, i) => { // flickering candle flames
+        const x = 160 + ux * 70, y = 22 - .16 * 70, f = flick(now, i);
+        lightGlow(g, x, y - 2, 13 * f, H ? 'rgba(150,255,90,.28)' : 'rgba(255,190,90,.33)'); flame(g, x, y, 1.5, f, H);
+      }));
     });
-    if (H) { cobwebCorner(g, 0, 0, 34); cobwebCorner(g, 320, 0, 34, true); obj(g, 26, 182, 30, g => art('k2')(g)); obj(g, 296, 184, 26, g => art('k2')(g)); }
+    if (H) {
+      cobwebCorner(g, 0, 0, 34); cobwebCorner(g, 320, 0, 34, true); obj(g, 26, 182, 30, g => art('k2')(g)); obj(g, 296, 184, 26, g => art('k2')(g));
+      anim((g, now) => {
+        lightGlow(g, 26, 184, 22 * flick(now, 3), 'rgba(255,170,50,.3)'); lightGlow(g, 296, 186, 20 * flick(now, 7), 'rgba(255,170,50,.3)');
+        drawSprite(g, 'k1', 160 + Math.sin(now / 2600) * 110, 62 + Math.sin(now / 1300) * 12, 22, 1, .78);   // a little ghost haunting the hall
+        flyingBat(g, now, 160, 36, 125, 8, 1500, 1, 13); flyingBat(g, now, 160, 46, 95, 10, 1200, 3.5, 11);
+      });
+    }
   },
-  (g, item) => { // Garden
+  (g, item, anim) => { // Garden
     const H = HALLOWEEN;
-    if (H) nightSky(g, 125); else daySky(g, 125, '#5fb0ff', '#d8efff');
+    if (H) nightSky(g, 125, anim); else daySky(g, 125, '#5fb0ff', '#d8efff', anim);
     // distant castle in the haze
     g.fillStyle = H ? 'rgba(20,10,40,.85)' : 'rgba(110,130,180,.55)';
     g.fillRect(30, 70, 70, 52); g.fillRect(36, 52, 14, 20); g.fillRect(64, 58, 14, 14); g.fillRect(222, 78, 64, 44); g.fillRect(250, 60, 12, 20);
@@ -2807,8 +2921,7 @@ const SCENES = [
       g.beginPath(); g.ellipse(0, .06, .42, .1, 0, 0, 7); g.fillStyle = lg(g, 0, -.04, 0, .16, [[0, W[0]], [.5, W[1]], [1, W[2]]]); g.fill();
       toy(g, g => rr(g, -.06, -.3, .12, .36, .04), STONE3, null, null);
       toy(g, g => { g.beginPath(); g.ellipse(0, -.3, .2, .06, 0, 0, 7); }, STONE3, null, null);
-      g.strokeStyle = H ? 'rgba(180,255,140,.75)' : 'rgba(210,235,255,.85)'; g.lineWidth = .025;
-      for (const sd of [-1, 1]) { g.beginPath(); g.moveTo(0, -.36); g.quadraticCurveTo(sd * .18, -.6, sd * .32, .02); g.stroke(); g.beginPath(); g.moveTo(sd * .12, -.31); g.quadraticCurveTo(sd * .22, -.42, sd * .26, .02); g.stroke(); }
+      anim((g, now) => obj(g, 160, 160, 92, g => fountainWater(g, now, H))); // flowing water, droplets and ripples
       if (H) glowAt(g, 0, 0, .5, 'rgba(150,255,90,.25)');
     }));
     item('statue', () => obj(g, 262, 150, 64, g => {
@@ -2819,12 +2932,15 @@ const SCENES = [
       obj(g, 0, -.62, .22, g => DRAW.k2(g));
       if (H) obj(g, -.32, .4, .3, g => art('k2')(g));
     }));
+    anim((g, now) => H ? fireflies(g, now) : butterflies(g, now));
+    if (H) anim((g, now) => fog(g, now, 132));
   },
-  (g, item) => { // Gate
+  (g, item, anim) => { // Gate
     const H = HALLOWEEN;
-    if (H) nightSky(g, 150); else {
+    if (H) nightSky(g, 150, anim); else {
       g.fillStyle = lg(g, 0, 0, 0, 150, [[0, '#ff8a5a'], [.6, '#ffc28a'], [1, '#ffe8c8']]); g.fillRect(0, 0, 320, 150);
       glowAt(g, 250, 52, 50, 'rgba(255,250,220,.7)'); g.fillStyle = '#fff6e0'; g.beginPath(); g.arc(250, 52, 15, 0, 7); g.fill();
+      anim(birds);
     }
     g.fillStyle = lg(g, 0, 150, 0, 200, H ? [[0, '#22302a'], [1, '#101a14']] : [[0, '#8fae5a'], [1, '#5f7f38']]); g.fillRect(0, 150, 320, 50);
     poly(g, [[146, 158], [174, 158], [206, 200], [114, 200]]); g.fillStyle = H ? '#4a3e5c' : '#c9a97a'; g.fill();
@@ -2841,7 +2957,7 @@ const SCENES = [
       g.fillStyle = lg(g, x - 24, 0, x + 24, 0, [[0, 'rgba(0,0,0,.35)'], [.3, 'rgba(255,255,255,.18)'], [.6, 'rgba(0,0,0,0)'], [1, 'rgba(0,0,0,.45)']]); g.fillRect(x - 24, 50, 48, 110);
       g.restore();
       g.beginPath(); g.moveTo(x - 6, 104); g.lineTo(x - 6, 92); g.arc(x, 92, 6, Math.PI, 0); g.lineTo(x + 6, 104); g.closePath(); g.fillStyle = H ? '#ffd24d' : '#1a1430'; g.fill();
-      if (H) glowAt(g, x, 96, 16, 'rgba(255,210,77,.35)');
+      if (H) anim((g, now) => lightGlow(g, x, 96, 15 * flick(now, x), 'rgba(255,200,70,.35)')); // candle-lit windows
       obj(g, x, 34, 60, g => toy(g, g => { g.beginPath(); g.moveTo(-.48, .32); g.quadraticCurveTo(-.1, .05, 0, -.5); g.quadraticCurveTo(.1, .05, .48, .32); g.quadraticCurveTo(0, .42, -.48, .32); g.closePath(); }, H ? ROOF_H : ROOF, g => {
         g.strokeStyle = 'rgba(0,0,30,.25)'; g.lineWidth = .02; for (const y of [-.1, .05, .2]) { g.beginPath(); g.moveTo(-.5, y + .1); g.quadraticCurveTo(0, y + .2, .5, y + .1); g.stroke(); }
       }, { x: -.14, y: .05, r: .12 }));
@@ -2855,11 +2971,20 @@ const SCENES = [
       }, { x: -.14, y: -.2, r: .12 });
       g.strokeStyle = '#ffc53d'; g.lineWidth = .025; g.beginPath(); g.arc(.18, .12, .045, 0, 7); g.stroke();
     }));
+    for (const x of [124, 196]) { // wall torches beside the gate
+      g.fillStyle = '#2a2030'; g.fillRect(x - 1, 116, 2, 10);
+      g.fillStyle = lg(g, x - 4, 0, x + 4, 0, [[0, '#4a3a2a'], [.4, '#a8845a'], [1, '#3a2a1a']]); poly(g, [[x - 4, 112], [x + 4, 112], [x + 2, 118], [x - 2, 118]]); g.fill();
+      anim((g, now) => { const f = flick(now, x); lightGlow(g, x, 108, 18 * f, H ? 'rgba(150,255,90,.3)' : 'rgba(255,170,60,.35)'); flame(g, x, 111, 2.4, f, H); });
+    }
     item('flags', () => { for (const [x, y] of [[45, 0], [275, 0], [160, 50]]) {
       g.strokeStyle = '#3d2412'; g.lineWidth = 1.6; g.beginPath(); g.moveTo(x, y + 18); g.lineTo(x, y - 2); g.stroke();
-      obj(g, x + 11, y + 3, 22, g => toy(g, g => { g.beginPath(); g.moveTo(-.5, -.3); g.quadraticCurveTo(0, -.45, .5, -.25); g.quadraticCurveTo(.3, 0, .5, .25); g.quadraticCurveTo(0, .1, -.5, .3); g.closePath(); }, H ? FLAG_H : FLAG, null, null));
+      anim((g, now) => obj(g, x + 11, y + 3, 22, g => wavingFlag(g, now, x, H)));
     } });
-    if (H) { obj(g, 120, 170, 22, g => art('k2')(g)); obj(g, 200, 172, 20, g => art('k2')(g)); }
+    if (H) {
+      obj(g, 100, 172, 22, g => art('k2')(g)); obj(g, 222, 174, 20, g => art('k2')(g));
+      anim((g, now) => { lightGlow(g, 100, 174, 18 * flick(now, 2), 'rgba(255,170,50,.3)'); lightGlow(g, 222, 176, 16 * flick(now, 5), 'rgba(255,170,50,.3)'); fog(g, now, 160);
+        flyingBat(g, now, 45, 44, 32, 9, 900, 0, 12); flyingBat(g, now, 275, 44, 32, 9, 1000, 2, 12); });
+    }
   },
 ];
 $('#castleBtn').onclick = () => { ac(); openCastle(); };
