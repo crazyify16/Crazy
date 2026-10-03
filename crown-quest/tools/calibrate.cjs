@@ -8,10 +8,12 @@
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const fs = require('fs');
 const SRC = process.argv[2], RUNS = +(process.argv[3] || 24), BUDGET = +(process.argv[4] || 150);
+const ONLY = process.argv[5] ? process.argv[5].split(',').map(Number) : null; // optional: just these levels, e.g. 5,13,22
 function rep(s, a, b) { if (!s.includes(a)) throw new Error('hook miss: ' + a.slice(0, 50)); return s.replace(a, b); }
 let s = fs.readFileSync(SRC, 'utf8');
 s = rep(s, 'function tween(o, to, dur, ease = easeOut) {', 'function tween(o, to, dur, ease = easeOut) {\n  if (window.__FAST) { for (const k in to) o[k] = to[k]; return Promise.resolve(); }');
 s = rep(s, 'const delay = ms => {', 'const delay = ms => { if (window.__FAST) return Promise.resolve();');
+s = rep(s, 'function ac() {', 'function ac() {\n  if (window.__FAST) return null; // no audio while simulating');
 s = rep(s, 'function flyPropFx(r, c, tr, tc, carry) {', 'function flyPropFx(r, c, tr, tc, carry) {\n  if (window.__FAST) return Promise.resolve();');
 s = rep(s, 'requestAnimationFrame(frame);\nif (S.unlocked', 'window.__T = { get G() { return G; }, startLevel, trySwap, tapSpecial, findMatches, decideSpecial, LEVEL_COUNT };\nrequestAnimationFrame(frame);\nif (S.unlocked');
 const COPY = require('path').join(require('os').tmpdir(), 'crown-quest-calib.html');
@@ -22,7 +24,7 @@ fs.writeFileSync(COPY, s);
   p.on('pageerror', e => console.log('ERR', e.message));
   await p.goto('file://' + COPY);
   await p.waitForTimeout(500);
-  const out = await p.evaluate(async ({ RUNS, BUDGET }) => {
+  const out = await p.evaluate(async ({ RUNS, BUDGET, ONLY }) => {
     window.__FAST = true; const T = window.__T;
     const BON = { ball: 40, tnt: 22, rh: 14, rv: 14, prop: 12 };
     function botMove() {
@@ -62,6 +64,8 @@ fs.writeFileSync(COPY, s);
     }
     const res = {};
     for (let n = 1; n <= T.LEVEL_COUNT; n++) {
+      if (ONLY && !ONLY.includes(n)) continue;
+      const t0 = performance.now();
       const used = []; let fails = 0;
       for (let k = 0; k < RUNS; k++) {
         T.startLevel(n); await new Promise(r => setTimeout(r, 0)); const G = T.G; if (BUDGET) G.moves = BUDGET;
@@ -75,13 +79,13 @@ fs.writeFileSync(COPY, s);
       }
       used.sort((a, b) => a - b);
       const q = f => used.length ? used[Math.min(used.length - 1, Math.floor(f * used.length))] : null;
-      res[n] = { p50: q(.5), p75: q(.75), p90: q(.9), fails, win: Math.round(used.length / RUNS * 100), cur: T.G.def.m, hard: !!T.G.def.hard, used };
+      res[n] = { ms: Math.round(performance.now() - t0), p50: q(.5), p75: q(.75), p90: q(.9), fails, win: Math.round(used.length / RUNS * 100), cur: T.G.def.m, hard: !!T.G.def.hard, used };
     }
     return res;
-  }, { RUNS, BUDGET });
+  }, { RUNS, BUDGET, ONLY });
   fs.writeFileSync(require('path').join(require('os').tmpdir(), 'crown-quest-calib.json'), JSON.stringify(out, null, 1));
   for (const [n, r] of Object.entries(out)) console.log(BUDGET
-    ? `${n.padStart(2)}  moves ${String(r.cur).padStart(2)}  | needed p50 ${r.p50} p75 ${r.p75} p90 ${r.p90}${r.fails ? '  NOT WON ' + r.fails : ''}`
+    ? `${n.padStart(2)}  (${r.ms} ms)  moves ${String(r.cur).padStart(2)}  | needed p50 ${r.p50} p75 ${r.p75} p90 ${r.p90}${r.fails ? '  NOT WON ' + r.fails : ''}`
     : `${n.padStart(2)}  moves ${String(r.cur).padStart(2)}  win ${String(r.win).padStart(3)}%${r.hard ? '  HARD' : ''}`);
   await b.close();
 })();

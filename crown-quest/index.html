@@ -95,6 +95,10 @@ button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
 .node.hard::before { content: 'HARD'; position: absolute; left: 50%; bottom: -24px; transform: translateX(-50%); font-family: var(--body); font-weight: 900; font-size: 10px; letter-spacing: .08em; padding: 1px 6px; border-radius: 6px; background: var(--ruby); color: #fff; text-shadow: none; box-shadow: 0 2px 0 #6a0a15; }
 .hard-tag { display: inline-block; font-weight: 900; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; padding: 3px 10px; border-radius: 8px; background: var(--ruby); color: #fff; box-shadow: 0 2px 0 #6a0a15; }
 .bubble small.hard { color: var(--ruby); }
+.node.rescue:not(.locked):not(.done) { background: radial-gradient(ellipse 60% 34% at 45% 22%, rgba(255,255,255,.6), rgba(255,255,255,0) 100%), radial-gradient(circle at 35% 30%, #7af0d8, #128a78 70%);
+  box-shadow: 0 0 0 3px #064a40, 0 6px 0 #064a40, 0 10px 16px rgba(0,0,0,.45), inset 0 -5px 0 rgba(0,0,0,.18); -webkit-text-stroke: 3px #064a40; }
+.node.rescue::before { content: 'RESCUE'; position: absolute; left: 50%; bottom: -24px; transform: translateX(-50%); font-family: var(--body); font-weight: 900; font-size: 10px; letter-spacing: .08em; padding: 1px 6px; border-radius: 6px; background: #128a78; color: #fff; text-shadow: none; box-shadow: 0 2px 0 #064a40; -webkit-text-stroke: 0; }
+.rescue-tag { background: #128a78 !important; box-shadow: 0 2px 0 #064a40 !important; }
 .node .stars { position: absolute; left: 50%; top: -16px; transform: translateX(-50%); display: flex; gap: 1px; }
 .node .stars i { width: 15px; height: 15px; display: block; clip-path: polygon(50% 0, 62% 35%, 100% 38%, 70% 60%, 80% 98%, 50% 76%, 20% 98%, 30% 60%, 0 38%, 38% 35%); background: rgba(0,0,0,.35); }
 .node .stars i.on { background: var(--gold); }
@@ -123,6 +127,8 @@ button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
 .moves.low b { color: #ff7a7a; animation: bump .6s infinite; }
 .moves b.tick { animation: tick .35s cubic-bezier(.2,1.8,.4,1); }
 @keyframes tick { 0% { transform: scale(1.45) rotate(-8deg); } 100% { transform: none; } }
+#peril { width: 100%; height: clamp(92px, 16vh, 132px); display: block; border-radius: 16px; box-sizing: border-box; border: 3px solid var(--gold); background: #05030a; box-shadow: 0 4px 0 rgba(0,0,0,.35); }
+.moves { min-width: 74px; width: auto !important; }
 .kingrow { display: flex; align-items: center; gap: 12px; }
 #king { width: 72px; height: 72px; flex: none; }
 .bubble { position: relative; flex: 1; min-width: 0; background: var(--cream); color: var(--ink); border-radius: 14px; padding: 6px 12px 7px; box-shadow: 0 3px 0 rgba(0,0,0,.3); font-weight: 800; font-size: 14px; line-height: 1.25; }
@@ -228,6 +234,7 @@ body.halloween .node.hard:not(.locked):not(.done) { background: radial-gradient(
       <div class="panel goals" id="goals"></div>
       <div class="panel moves" id="movesBox"><small>Moves</small><b id="moves">20</b></div>
     </header>
+    <canvas id="peril" hidden aria-label="Rescue the King before the rubble reaches him"></canvas>
     <div class="kingrow">
       <canvas id="king" width="160" height="160" aria-hidden="true"></canvas>
       <div class="bubble"><small id="lvlLabel">Level 1</small><span id="kingText">Help me, hero!</span></div>
@@ -393,7 +400,7 @@ const sfx = {
   },
   crack(kind = 'crate') {
     if (throttle('crack' + kind, 45)) return;
-    if (kind === 'stone') { nz({ dur: .16, vol: .26, bp: 420, q: 2 }); nz({ dur: .06, vol: .12, hp: 3200 }); osc({ f: 95, f2: 55, dur: .14, vol: .12, verb: 0 }); }
+    if (kind !== 'crate') { nz({ dur: .16, vol: .26, bp: 420, q: 2 }); nz({ dur: .06, vol: .12, hp: 3200 }); osc({ f: 95, f2: 55, dur: .14, vol: .12, verb: 0 }); }
     else { nz({ dur: .1, vol: .24, bp: 750, q: 5 }); osc({ f: 190, f2: 120, type: 'triangle', dur: .11, vol: .12, verb: .05 }); }
   },
   ice() {
@@ -568,7 +575,25 @@ const MOVES = [
   42, 32, 30, 27, 26, 44, 31, 40, 31, 28,
 ];
 const isHard = n => n >= 10 && n % 5 === 0;
-function getLevel(n) { const def = n <= HAND.length ? HAND[n - 1] : genLevel(n); return { ...def, m: MOVES[n - 1] || def.m, hard: isHard(n) }; }
+// Rescue levels: rubble pours toward the King; break every rubble block on the board before time runs out.
+const RESCUE_LEVELS = [5, 13, 22, 31, 41, 48, 56];
+// Starting seconds per rescue level: about 3.5 s per move the bot needed (75th percentile, tools/calibrate.cjs
+// with a 150-move budget), less the time players win back by breaking rubble. The first rescue is extra gentle.
+const RESCUE_TIME = [45, 50, 55, 65, 65, 70, 70];
+const isRescue = n => RESCUE_LEVELS.includes(n);
+function genRescue(n) {
+  const idx = RESCUE_LEVELS.indexOf(n), rows = 9, cols = 8;
+  const L = Array.from({ length: rows }, () => Array(cols).fill('.'));
+  // Heaps grow taller rather than wider, so at least three top columns stay open for new pieces to fall in.
+  const heap = (w0, h, right) => { for (let r = 0; r < h; r++) for (let c = 0; c < Math.max(1, w0 - Math.floor(r * w0 / h)); c++) L[r][right ? cols - 1 - c : c] = 'R'; };
+  heap(idx === 1 ? 4 : 3, Math.min(7, 4 + idx), false);              // a heap in the top-left
+  if (idx >= 2) heap(2, Math.min(6, 2 + idx), true);                 // and later a second heap on the right
+  if (idx >= 4) for (const c of [2, 3, 4, 5]) L[6][c] = 'C';
+  const rubble = L.flat().filter(ch => ch === 'R').length;
+  return { m: 9999, k: n < 13 ? 4 : 5, g: [], L: L.map(r => r.join('')), rescue: { time: RESCUE_TIME[idx] || Math.round(45 + rubble * 2.5), relief: 2 } };
+}
+function getLevel(n) {
+  if (isRescue(n)) return { ...genRescue(n), hard: false }; const def = n <= HAND.length ? HAND[n - 1] : genLevel(n); return { ...def, m: MOVES[n - 1] || def.m, hard: isHard(n) }; }
 
 /* =========================================================
    Piece art (drawn in a unit box centred on 0,0)
@@ -780,6 +805,15 @@ const DRAW = {
     g.strokeStyle = 'rgba(60,130,200,.45)'; g.lineWidth = .018;
     g.beginPath(); g.moveTo(.1, .4); g.lineTo(.16, .18); g.lineTo(.36, .1); g.moveTo(.16, .18); g.lineTo(.06, .06); g.stroke();
     twinkle(g, -.28, -.28, .07);
+  },
+  rubble1(g) { // a heap of loose rocks, a few teal crystals and gold nuggets
+    const R = rng(5), rocks = [];
+    for (let i = 0; i < 16; i++) { const a = R() * 7, d = Math.sqrt(R()) * .34; rocks.push([Math.cos(a) * d, Math.sin(a) * d * .85 + .04, .1 + R() * .06, R()]); }
+    rocks.sort((a, b) => a[1] - b[1]);
+    for (const [x, y, r, v] of rocks) {
+      const pal = v < .12 ? PAL.gold : v < .3 ? { light: '#b8f0e0', base: '#4fb8a0', dark: '#1f6a5a', line: '#0a3028' } : v < .65 ? PAL.rock : { light: '#c9cfdd', base: '#7c8398', dark: '#3e4458', line: '#1a1d28' };
+      toy(g, g => { g.beginPath(); g.ellipse(x, y, r, r * .85, v * 3, 0, 7); }, pal, null, { x: x - r * .3, y: y - r * .4, r: r * .45 });
+    }
   },
   iceGoal(g) { g.save(); g.scale(.85, .85); art('k3')(g); g.restore(); art('ice')(g); },
   star(g) {
@@ -1109,7 +1143,7 @@ function sprite(key) {
   }
   return s;
 }
-const goalKey = goal => goal.type === 'color' ? 'k' + goal.c : goal.type === 'crate' ? 'crate1' : goal.type === 'ice' ? 'iceGoal' : 'stone2';
+const goalKey = goal => goal.type === 'color' ? 'k' + goal.c : goal.type === 'crate' ? 'crate1' : goal.type === 'ice' ? 'iceGoal' : goal.type === 'rubble' ? 'rubble1' : 'stone2';
 
 /* =========================================================
    Game state
@@ -1156,7 +1190,7 @@ const N4 = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 function startLevel(n) {
   const def = getLevel(n), rows = def.L.length, cols = def.L[0].length;
   const grid = [];
-  let crates = 0, stones = 0, ices = 0;
+  let crates = 0, stones = 0, ices = 0, rubble = 0;
   for (let r = 0; r < rows; r++) {
     grid.push([]);
     for (let c = 0; c < cols; c++) {
@@ -1164,6 +1198,7 @@ function startLevel(n) {
       if (ch === 'C' || ch === 'D') { cell.b = { t: 'crate', hp: ch === 'C' ? 1 : 2, v: { s: 1, rot: 0 } }; crates++; }
       if (ch === 'S') { cell.b = { t: 'stone', hp: 2, v: { s: 1, rot: 0 } }; stones++; }
       if (ch === 'I') { cell.ice = 1; ices++; }
+      if (ch === 'R') { cell.b = { t: 'rubble', hp: 1, v: { s: 1, rot: 0 } }; rubble++; }
       grid[r].push(cell);
     }
   }
@@ -1171,12 +1206,16 @@ function startLevel(n) {
   if (crates) goals.push({ type: 'crate', left: crates, shown: crates });
   if (stones) goals.push({ type: 'stone', left: stones, shown: stones });
   if (ices) goals.push({ type: 'ice', left: ices, shown: ices });
+  if (rubble) goals.push({ type: 'rubble', left: rubble, shown: rubble });
   G = { n, def, rows, cols, grid, goals, moves: def.m, busy: false, over: false, sel: null, booster: null,
     dying: [], dyingB: [], dyingIce: [], fx: [], parts: [], pending: new Set(), claimed: new Set(), chain: 0, shake: 0, hint: null, cs: 40, ox: 6, oy: 6 };
+  G.peril = def.rescue ? makePeril() : null; G.tLeft = def.rescue ? def.rescue.time : 0; G.started = false;
   fillBoard();
   show('game');
+  $('#peril').hidden = !def.rescue; document.querySelector('.kingrow').hidden = !!def.rescue;
   $('#lvlLabel').textContent = 'Level ' + n + (def.hard ? ' \u00b7 Hard' : '');
-  $('#lvlLabel').classList.toggle('hard', !!def.hard);
+  $('#lvlLabel').classList.toggle('hard', !!def.hard || !!def.rescue);
+  if (def.rescue) $('#lvlLabel').textContent = 'Level ' + n + ' \u00b7 Rescue!';
   buildGoals(); buildBoosters(); updateHud(); layout();
   scheduleHint();
   KING.until = 0; kingSay(introLine(def), 'happy', 4500, 2);
@@ -1298,6 +1337,7 @@ function hitBlocker(r, c) {
   if (b.hp <= 0) {
     cell.b = null;
     const goal = goalFor(b.t); if (goal) { goal.left--; flyToGoal(goal, r, c); }
+    if (b.t === 'rubble' && G.peril) rescueRelief(r, c);
     const d = { b, r, c, s: 1, a: 1, rot: 0 }; G.dyingB.push(d);
     tween(d, { s: 1.35, a: 0, rot: (Math.random() - .5) * .8 }, 240).then(() => removeFrom(G.dyingB, d));
   } else { b.v.s = 1.25; b.v.rot = (Math.random() < .5 ? -1 : 1) * .18; tween(b.v, { s: 1, rot: 0 }, 320, easeBack); }
@@ -1488,7 +1528,7 @@ function consume(t) { if (!G.dying.includes(t)) { G.dying.push(t); tween(t, { s:
    Turn flow
    ========================================================= */
 function useMove() {
-  G.moves--; updateHud(); if (G.moves <= 5 && G.moves > 0) sfx.tick();
+  G.moves--; updateHud(); if (!G.def.rescue && G.moves <= 5 && G.moves > 0) sfx.tick();
   const b = $('#moves'); b.classList.remove('tick'); void b.offsetWidth; b.classList.add('tick');
 }
 async function trySwap(r1, c1, r2, c2) {
@@ -1645,7 +1685,7 @@ async function introDrop() {
   const mv = [];
   for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) { const t = G.grid[r][c].tile; if (t) { t.y = r - G.rows - 1 - (G.rows - r) * .15; mv.push({ t, r, c }); } }
   await animateFall(mv, 40);
-  G.busy = false; scheduleHint();
+  G.busy = false; G.started = true; scheduleHint();
 }
 async function settle() {
   for (let guard = 0; guard < 60; guard++) {
@@ -1682,9 +1722,10 @@ async function shuffleBoard() {
 }
 async function winFlow() {
   G.over = true; kingSay(SP('Hooray! You did it, hero!', 'Bwah-ha-ha! Spooktacular, my friend!'), 'cheer', 1e9, 3);
-  const left = G.moves, m = G.def.m;
-  const stars = left >= Math.ceil(m * .28) ? 3 : left >= Math.ceil(m * .1) ? 2 : 1;
-  await delay(250); sfx.win(); banner(SP('Level Complete!', 'Spooktacular!')); confetti(REDUCED ? 40 : 140); await delay(1100);
+  const rescue = G.def.rescue, left = rescue ? 0 : G.moves, m = G.def.m, T0 = rescue ? rescue.time : 1;
+  const stars = rescue ? (G.tLeft >= T0 * .45 ? 3 : G.tLeft >= T0 * .2 ? 2 : 1) : left >= Math.ceil(m * .28) ? 3 : left >= Math.ceil(m * .1) ? 2 : 1;
+  if (rescue) { G.peril.state = 'saved'; G.peril.t0 = performance.now(); }
+  await delay(250); sfx.win(); banner(rescue ? SP('King saved!', 'Count saved!') : SP('Level Complete!', 'Spooktacular!')); confetti(REDUCED ? 40 : 140); await delay(1100);
   if (left > 0) {
     banner(SP("King's Bonus!", "Count's Bonus!")); await delay(500);
     const n = Math.min(left, 12);
@@ -1705,7 +1746,7 @@ async function winFlow() {
       await flush(); await cascade();
     }
   }
-  const coins = (15 + left * 4) * (G.def.hard ? 2 : 1);
+  const coins = rescue ? 30 + Math.round(G.tLeft) : (15 + left * 4) * (G.def.hard ? 2 : 1);
   const firstClear = !S.stars[G.n];
   S.stars[G.n] = Math.max(S.stars[G.n] || 0, stars);
   if (G.n >= S.unlocked) S.unlocked = Math.min(LEVEL_COUNT, G.n + 1);
@@ -2002,6 +2043,134 @@ function banner(text) {
 }
 
 
+
+/* =========================================================
+   Rescue levels: the danger window above the board
+   ========================================================= */
+function makePeril() {
+  const rocks = [];
+  for (let i = 0; i < 150; i++) { const u = Math.random(); rocks.push({ u, v: Math.random(), k: Math.random() < .07 ? 3 : Math.random() < .2 ? 2 : Math.random() < .55 ? 0 : 1, s: .8 + Math.random() * .5 }); }
+  rocks.sort((a, b) => a.v - b.v);
+  return { pDisp: 0, rocks, falling: [], drops: 0, state: 'danger', t0: 0 };
+}
+function tickRescue(dt) {
+  if (!G.started || G.over || !$('#modal').hidden) return;
+  G.tLeft -= dt / 1000;
+  if (G.tLeft <= 0) { G.tLeft = 0; if (!G.busy) rescueFail(); }
+  const sec = Math.ceil(G.tLeft);
+  if (sec !== G.shownSec) { G.shownSec = sec; updateHud(); if (sec <= 10 && sec > 0) sfx.tick(); }
+}
+function rescueRelief(r, c) { // every rubble block broken sends rocks down the trapdoor and buys time
+  G.tLeft += G.def.rescue.relief; G.peril.drops += 7; updateHud();
+  G.fx.push(floatText(r, c, `+${G.def.rescue.relief}s`, '#7be04a'));
+}
+function rescueFail() {
+  if (G.over) return;
+  G.over = true; clearHint();
+  G.peril.state = 'squish'; G.peril.t0 = performance.now();
+  sfx.boom(); G.shake = 10 * JUICE;
+  kingSay(SP('Oof!', 'Curses!'), 'sad', 1e9, 3);
+  const g0 = G; setTimeout(() => { if (G === g0 && G.peril.state === 'squish') { sfx.lose(); showRescueLose(); } }, 1500);
+}
+function showRescueLose() {
+  const goals = G.goals.filter(g => g.left > 0).map(g => ({ key: goalKey(g), n: g.left })), cost = 60;
+  const card = modal(`<h3>Oh no!</h3><p>${SP('The King', 'The Count')} got squished! Break the rubble faster to save him.</p>${goalIconsHtml(goals)}
+    <div class="row"><button class="btn blue" data-a="more" ${S.coins < cost ? 'disabled' : ''}>+20 seconds · ${cost} coins</button></div>
+    <div class="row"><button class="btn ghost" data-a="map">Map</button><button class="btn green" data-a="retry">Retry</button></div>`);
+  fillGoalIcons(card, goals);
+  card.querySelector('[data-a=more]').onclick = () => {
+    if (S.coins < cost) return;
+    S.coins -= cost; save(); sfx.coin(); G.tLeft += 20; G.over = false; G.busy = false; G.peril.state = 'danger';
+    updateHud(); closeModal(); scheduleHint(); KING.until = 0;
+  };
+  card.querySelector('[data-a=map]').onclick = () => { closeModal(); toMap(); };
+  card.querySelector('[data-a=retry]').onclick = () => { closeModal(); startLevel(G.n); };
+}
+const PERIL = { key: '', bg: null, cache: new Map() };
+const ROCK_PALS = [PAL.rock, { light: '#c9cfdd', base: '#7c8398', dark: '#3e4458', line: '#1a1d28' }, { light: '#b8f0e0', base: '#4fb8a0', dark: '#1f6a5a', line: '#0a3028' }, PAL.gold];
+function cachedArt(id, px, draw) {
+  let c = PERIL.cache.get(id + px);
+  if (!c) { c = document.createElement('canvas'); c.width = c.height = px; const g = c.getContext('2d'); g.translate(px / 2, px / 2); g.scale(px, px); const old = PX; PX = px; draw(g); PX = old; PERIL.cache.set(id + px, c); }
+  return c;
+}
+function drawRock(g, k, x, y, size) {
+  const px = Math.max(4, Math.round(size * DPR / 2) * 2);
+  g.drawImage(cachedArt('rock' + k, px, g => toy(g, g => { g.beginPath(); g.ellipse(0, 0, .44, .36, k * .7, 0, 7); }, ROCK_PALS[k], null, { x: -.14, y: -.14, r: .18 })), x - size / 2, y - size / 2, size, size);
+}
+function hostImage(mood, px, blink) { // the King (or the Count), feet at the bottom of the image
+  return cachedArt('host' + mood + blink + HALLOWEEN, px, g => { g.translate(0, -.02); drawKing(g, mood, blink ? 3450 : 500); });
+}
+function bakePerilBg(W, H) {
+  const cv = document.createElement('canvas'); cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  const g = cv.getContext('2d'); g.scale(DPR, DPR);
+  const floorY = H * .84, kingX = W * .8, Hw = HALLOWEEN;
+  bricks(g, 0, 0, W, floorY, 30, 13, Hw ? 272 : 28, Hw ? 22 : 16, Hw ? 12 : 30, 11);
+  const light = g.createRadialGradient(kingX, H * .45, 10, kingX, H * .45, W * .6); light.addColorStop(0, Hw ? 'rgba(150,90,220,.25)' : 'rgba(255,220,150,.28)'); light.addColorStop(1, 'rgba(0,0,0,.35)');
+  g.fillStyle = light; g.fillRect(0, 0, W, H);
+  // the door the host is trapped against
+  const dw = W * .1, dh = H * .6;
+  g.beginPath(); g.moveTo(kingX - dw, floorY); g.lineTo(kingX - dw, floorY - dh + dw); g.arc(kingX, floorY - dh + dw, dw, Math.PI, 0); g.lineTo(kingX + dw, floorY); g.closePath();
+  g.fillStyle = Hw ? '#ff9a2e' : '#e0a52a'; g.fill();
+  g.beginPath(); g.moveTo(kingX - dw * .82, floorY); g.lineTo(kingX - dw * .82, floorY - dh + dw); g.arc(kingX, floorY - dh + dw, dw * .82, Math.PI, 0); g.lineTo(kingX + dw * .82, floorY); g.closePath();
+  g.fillStyle = lg(g, 0, floorY - dh, 0, floorY, Hw ? [[0, '#2a1240'], [1, '#12081e']] : [[0, '#1f5a3a'], [1, '#0f2e1e']]); g.fill();
+  // ceiling beam with the hole the rubble pours from
+  g.fillStyle = lg(g, 0, 0, 0, H * .08, [[0, '#2a1a10'], [1, '#5a3a20']]); g.fillRect(0, 0, W, H * .08);
+  g.fillStyle = '#05030a'; rr(g, W * .045, 0, W * .1, H * .07, 3); g.fill();
+  // floor with a trapdoor under the heap
+  g.fillStyle = lg(g, 0, floorY, 0, H, Hw ? [[0, '#3a2a52'], [1, '#1a0f24']] : [[0, '#8a5a32'], [1, '#4a2e18']]); g.fillRect(0, floorY, W, H - floorY);
+  g.fillStyle = 'rgba(0,0,0,.25)'; for (let x = 0; x < W; x += 26) g.fillRect(x, floorY, 1.5, H - floorY);
+  g.fillStyle = lg(g, 0, floorY, 0, H, [[0, '#000000'], [1, Hw ? '#1a0f24' : '#2a160a']]); g.fillRect(W * .04, floorY + 2, W * .4, H - floorY - 2); // trapdoor pit
+  g.strokeStyle = Hw ? '#5a4a6e' : '#a8784a'; g.lineWidth = 2; g.strokeRect(W * .04, floorY + 2, W * .4, H - floorY - 1);
+  return cv;
+}
+function renderPeril(now) {
+  const cv = $('#peril'), W = cv.clientWidth, H = cv.clientHeight; if (!W || !H) return;
+  const pw = Math.round(W * DPR), ph = Math.round(H * DPR);
+  if (cv.width !== pw || cv.height !== ph) { cv.width = pw; cv.height = ph; }
+  const key = W + 'x' + H + HALLOWEEN + DPR;
+  if (PERIL.key !== key) { PERIL.key = key; PERIL.bg = bakePerilBg(W, H); PERIL.cache.clear(); }
+  const g = cv.getContext('2d'); g.setTransform(DPR, 0, 0, DPR, 0, 0); g.clearRect(0, 0, W, H);
+  g.drawImage(PERIL.bg, 0, 0, W, H);
+  const P = G.peril, T0 = G.def.rescue.time;
+  let target = Math.min(1, Math.max(0, 1 - G.tLeft / T0));
+  if (P.state === 'squish') target = 1.12; else if (P.state === 'saved') target = 0;
+  P.pDisp += (target - P.pDisp) * (P.state === 'saved' ? .05 : .08);
+  const floorY = H * .84, wallX = W * .03, kingX = W * .8, kSize = H * .8, rs = H * .11, pileH = H * .62;
+  const front = W * .2 + (kingX - W * .05 - W * .2) * P.pDisp;      // the heap's leading edge creeps toward the host
+  const topAt = u => pileH * (1 - .7 * Math.pow(Math.min(1, Math.max(0, u)), 1.2));
+  const blink = now % 3400 < 120 && P.state !== 'squish';
+  const drawHost = () => {
+    const mood = P.state === 'saved' ? 'cheer' : P.state === 'squish' ? 'sad' : 'worried';
+    const img = hostImage(mood, Math.round(kSize * DPR), blink);
+    let x = kingX, y = floorY;
+    if (P.state === 'danger' && P.pDisp > .55) x += Math.sin(now / 22) * 2.2 * (P.pDisp - .55) / .45;   // trembling
+    if (P.state === 'saved') y -= Math.abs(Math.sin(now / 140)) * kSize * .08;
+    g.save(); g.translate(x, y);
+    if (P.state === 'squish') { const q = Math.min(1, (now - P.t0) / 220); g.scale(1 + .45 * q, 1 - .7 * q); }  // comically flattened
+    g.drawImage(img, -kSize / 2, -kSize, kSize, kSize); g.restore();
+  };
+  if (P.state === 'squish') drawHost();
+  if (P.state === 'danger' && Math.random() < .55) P.falling.push({ x: W * .1 + (Math.random() - .5) * W * .06, y: H * .08, vy: 1 + Math.random(), k: Math.random() < .2 ? 2 : Math.random() < .5 ? 0 : 1, drop: false });
+  if (P.state === 'saved' && Math.random() < .7) P.drops++;
+  while (P.drops > 0) { P.drops--; P.falling.push({ x: wallX + Math.random() * Math.max(10, front - wallX) * .9, y: floorY - Math.random() * pileH * .5, vy: .5, k: Math.random() < .08 ? 3 : Math.random() < .5 ? 0 : 1, drop: true }); }
+  for (const r of P.rocks) drawRock(g, r.k, wallX + r.u * (front - wallX), floorY - r.v * topAt(r.u) - rs * .3, rs * r.s);
+  for (let i = P.falling.length - 1; i >= 0; i--) {
+    const f = P.falling[i]; f.vy += .3; f.y += f.vy;
+    const limit = f.drop ? H + rs : floorY - topAt((f.x - wallX) / Math.max(1, front - wallX)) - rs * .2;
+    if (f.y > limit) { P.falling.splice(i, 1); continue; }
+    drawRock(g, f.k, f.x, f.y, rs * .9);
+  }
+  if (P.state !== 'squish') drawHost();
+  if (P.state === 'squish') for (let i = 0; i < 3; i++) { const a = now / 200 + i * 2.1; twinkle(g, kingX + Math.cos(a) * kSize * .32, floorY - kSize * .42 + Math.sin(a) * kSize * .08, kSize * .07); }
+  if (P.state === 'danger' && P.pDisp > .6) { // a panicked shout for help
+    const s = 1 + Math.sin(now / 110) * .07, bx = kingX - kSize * .55, by = floorY - kSize * .95;
+    g.save(); g.translate(bx, by); g.scale(s, s);
+    g.fillStyle = '#fff'; rr(g, -26, -12, 52, 22, 9); g.fill(); poly(g, [[8, 9], [18, 9], [20, 16]]); g.fill();
+    g.fillStyle = '#e8102c'; g.font = `16px 'Lilita One', 'Arial Rounded MT Bold', sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('HELP!', 0, 0);
+    g.restore();
+  }
+}
+
 /* =========================================================
    The King: drawn character who reacts and gives tips
    ========================================================= */
@@ -2151,7 +2320,7 @@ function kingSay(text, mood = 'happy', ms = 2200, prio = 0) {
   if ($('#kingText').textContent !== text && prio >= 1) sfx.blab(Math.min(7, 3 + Math.floor(text.length / 14)));
   setKingText(text, true);
 }
-const GOAL_NAMES = { crate: 'crates', get stone() { return SP('stones', 'tombstones'); }, get ice() { return SP('ice blocks', 'cobwebs'); } };
+const GOAL_NAMES = { crate: 'crates', rubble: 'rubble', get stone() { return SP('stones', 'tombstones'); }, get ice() { return SP('ice blocks', 'cobwebs'); } };
 function kingIdle() {
   if (G.moves <= 5 && !G.over) return { mood: 'worried', text: G.moves === 1 ? 'Last move! Make it count!' : `Only ${G.moves} moves left!` };
   const left = G.goals.filter(g => g.left > 0).map(g => `${g.left} ${g.type === 'color' ? KIND[g.c].name : GOAL_NAMES[g.type]}`);
@@ -2358,7 +2527,7 @@ function frame(now) {
   const dt = Math.max(0, Math.min(50, now - lastNow)); lastNow = now;
   stepTweens(now);
   try {
-    if (G && !$('#game').hidden) { renderBoard(now, dt); renderKing(now); }
+    if (G && !$('#game').hidden) { renderBoard(now, dt); renderKing(now); if (G.peril) { tickRescue(dt); renderPeril(now); } }
     if (SCN && !$('#castle').hidden && now - SCN.last > (REDUCED ? 1000 : 33)) renderScene(now);
     renderFx(now);
   } catch (e) { console.error(e); }
@@ -2382,7 +2551,15 @@ function renderGoalCounts(bump) {
     if (bump === goal) { d.classList.remove('bump'); void d.offsetWidth; d.classList.add('bump'); }
   });
 }
+const clock = t => `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
 function updateHud() {
+  const box = $('#movesBox');
+  if (G.def.rescue) { // rescue levels run on a clock instead of moves
+    const t = Math.max(0, Math.ceil(G.tLeft));
+    box.querySelector('small').textContent = 'Time'; $('#moves').textContent = clock(t); $('#moves').style.fontSize = '27px';
+    box.classList.toggle('low', t <= 15 && !G.over); return;
+  }
+  box.querySelector('small').textContent = 'Moves'; $('#moves').style.fontSize = '';
   $('#moves').textContent = Math.max(0, G.moves);
   $('#movesBox').classList.toggle('low', G.moves <= 5 && !G.over);
 }
@@ -2447,14 +2624,16 @@ function goalIconsHtml(goals) { return `<div class="goalrow">${goals.map((g, i) 
 function fillGoalIcons(card, goals) { goals.forEach((g, i) => drawIcon(card.querySelector(`[data-mi="${i}"] canvas`), g.key)); }
 function levelGoals(n) {
   const def = getLevel(n); const out = def.g.map(([c, k]) => ({ key: 'k' + c, n: k }));
-  let cr = 0, st = 0, ic = 0; for (const row of def.L) for (const ch of row) { if (ch === 'C' || ch === 'D') cr++; if (ch === 'S') st++; if (ch === 'I') ic++; }
-  if (cr) out.push({ key: 'crate1', n: cr }); if (st) out.push({ key: 'stone2', n: st }); if (ic) out.push({ key: 'iceGoal', n: ic });
+  let cr = 0, st = 0, ic = 0, ru = 0; for (const row of def.L) for (const ch of row) { if (ch === 'C' || ch === 'D') cr++; if (ch === 'S') st++; if (ch === 'I') ic++; if (ch === 'R') ru++; }
+  if (cr) out.push({ key: 'crate1', n: cr }); if (st) out.push({ key: 'stone2', n: st }); if (ic) out.push({ key: 'iceGoal', n: ic }); if (ru) out.push({ key: 'rubble1', n: ru });
   return { def, goals: out };
 }
 function openLevel(n) {
   ac();
   const { def, goals } = levelGoals(n);
-  const card = modal(`<h3>Level ${n}</h3>${def.hard ? '<span class="hard-tag">Hard level</span>' : ''}<p>Clear these before your ${def.m} moves run out.${def.hard ? ' Win for double coins!' : ''}</p>${goalIconsHtml(goals)}<div class="row"><button class="btn ghost" data-a="close">Not now</button><button class="btn green" data-a="play">Play</button></div>`);
+  const card = modal(`<h3>Level ${n}</h3>${def.hard ? '<span class="hard-tag">Hard level</span>' : ''}${def.rescue ? '<span class="hard-tag rescue-tag">Rescue!</span>' : ''}<p>${def.rescue
+    ? `${SP('The King', 'The Count')} is trapped and the rubble is closing in! Break all of it within ${clock(def.rescue.time)}. Every piece you break buys ${def.rescue.relief} more seconds.`
+    : `Clear these before your ${def.m} moves run out.${def.hard ? ' Win for double coins!' : ''}`}</p>${goalIconsHtml(goals)}<div class="row"><button class="btn ghost" data-a="close">Not now</button><button class="btn green" data-a="play">Play</button></div>`);
   fillGoalIcons(card, goals);
   card.querySelector('[data-a=close]').onclick = closeModal;
   card.querySelector('[data-a=play]').onclick = () => { closeModal(); startLevel(n); };
@@ -2501,9 +2680,9 @@ function buildMap() {
     const [x, y] = pts[i - 1];
     const b = document.createElement('button');
     const st = S.stars[i] || 0, locked = i > S.unlocked;
-    b.className = 'node' + (st ? ' done' : '') + (locked ? ' locked' : '') + (i === S.unlocked ? ' current' : '') + (isHard(i) ? ' hard' : '');
+    b.className = 'node' + (st ? ' done' : '') + (locked ? ' locked' : '') + (i === S.unlocked ? ' current' : '') + (isHard(i) ? ' hard' : '') + (isRescue(i) ? ' rescue' : '');
     b.style.left = x + 'px'; b.style.top = y + 'px'; b.textContent = i;
-    b.setAttribute('aria-label', `Level ${i}${isHard(i) ? ', hard level' : ''}${locked ? ', locked' : st ? `, ${st} stars` : ''}`);
+    b.setAttribute('aria-label', `Level ${i}${isHard(i) ? ', hard level' : ''}${isRescue(i) ? ', rescue level' : ''}${locked ? ', locked' : st ? `, ${st} stars` : ''}`);
     if (st) { const s = document.createElement('span'); s.className = 'stars'; s.innerHTML = [1, 2, 3].map(k => `<i class="${k <= st ? 'on' : ''}"></i>`).join(''); b.appendChild(s); }
     if (!locked) b.onclick = () => openLevel(i);
     inner.appendChild(b);
@@ -2641,7 +2820,7 @@ function renderCastle() {
     const b = row.querySelector('button');
     if (b) b.onclick = () => {
       if (starBalance() < cost) return;
-      S.spent += cost; S.tasks[viewArea] = S.tasks[viewArea] || []; S.tasks[viewArea][k] = true; sfx.build();
+      S.spent += cost; S.tasks[viewArea] = S.tasks[viewArea] || []; S.tasks[viewArea][k] = true; pendingAppear = key;
       if (areaDone(viewArea)) {
         S.coins += 150; for (const id of Object.keys(S.boosters)) S.boosters[id]++;
         save(); renderCastle();
@@ -2655,21 +2834,37 @@ function renderCastle() {
   drawScene();
 }
 // The castle scene is baked once into a static layer; only the moving parts are redrawn each frame.
-let SCN = null;
+let SCN = null, pendingAppear = null;
+// Where each item sits, for the dust and sparkles when it lands.
+const ITEM_SPOTS = {
+  carpet: [[160, 176]], throne: [[160, 126]], banners: [[58, 98], [262, 98]], chandelier: [[160, 30]],
+  hedges: [[50, 140], [270, 140]], arch: [[160, 122]], fountain: [[160, 176]], statue: [[262, 182]],
+  walls: [[110, 160], [210, 160]], towers: [[45, 160], [275, 160]], gate: [[160, 160]], flags: [[50, 18], [280, 18], [165, 68]],
+};
 function drawScene() {
+  const appear = pendingAppear; pendingAppear = null;
   const cv = $('#scene'), w = cv.clientWidth || 320, h = w * .625;
   cv.width = Math.round(w * DPR); cv.height = Math.round(h * DPR); SS = DPR * w / 320;
   const done = S.tasks[viewArea] || [], keys = AREAS[viewArea].tasks.map(t => t[0]), anims = [];
   const bg = bake(0, 0, 320, 200, g => {
-    // things not built yet show as faint ghosts of what's coming
-    const item = (key, fn) => { const on = done[keys.indexOf(key)]; g.save(); g.globalAlpha = on ? 1 : .2; fn(); g.restore(); };
+    // things not built yet show as faint ghosts of what's coming; a just-built item is left out so it can drop in
+    const item = (key, fn) => { if (key === appear) return; const on = done[keys.indexOf(key)]; g.save(); g.globalAlpha = on ? 1 : .2; fn(g); g.restore(); };
     const anim = fn => anims.push({ fn, alpha: g.globalAlpha });
     SCENES[viewArea](g, item, anim);
   });
+  let drop = null;
+  if (appear) { // the newly built item on a layer of its own (the rest of the scene is drawn to a throwaway canvas)
+    const scratch = document.createElement('canvas'); scratch.width = scratch.height = 1;
+    let inside = false;
+    const layer = bake(0, 0, 320, 200, lg2 => SCENES[viewArea](scratch.getContext('2d'),
+      (key, fn) => { if (key !== appear) return; inside = true; lg2.save(); fn(lg2); lg2.restore(); inside = false; },
+      fn => { if (inside) { lg2.save(); fn(lg2, performance.now()); lg2.restore(); } }));
+    drop = { layer, key: appear, t0: performance.now(), landed: false };
+  }
   const built = done.filter(Boolean).length, mood = areaDone(viewArea) ? 'cheer' : built ? 'happy' : 'worried';
   const cx = viewArea === 0 ? 92 : 64, cy = 152, k = 76;
   const pose = t => bake(cx - k * .62, cy - k * .64, k * 1.24, k * 1.26, g => obj(g, cx, cy, k, g => drawKing(g, mood, t)));
-  SCN = { bg, anims, poses: [pose(500), pose(3450)], mood, k, last: 0 };
+  SCN = { bg, anims, poses: [pose(500), pose(3450)], mood, k, last: 0, drop, parts: [] };
   renderScene(performance.now());
 }
 function renderScene(now) {
@@ -2678,6 +2873,26 @@ function renderScene(now) {
   g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cv.width, cv.height); g.drawImage(SCN.bg.cv, 0, 0);
   g.setTransform(SS, 0, 0, SS, 0, 0);
   for (const a of SCN.anims) { g.save(); g.globalAlpha = a.alpha; a.fn(g, now); g.restore(); }
+  if (SCN.drop) { // a newly built item drops in, bounces, and lands in a puff of dust and sparkles
+    const d = SCN.drop, p = Math.min(1, (now - d.t0) / 900);
+    if (p >= 1) { drawScene(); return; }
+    if (!d.landed && p > .36) {
+      d.landed = true; sfx.build();
+      for (const [x, y] of ITEM_SPOTS[d.key] || [[160, 150]]) for (let i = 0; i < 9; i++) {
+        const a = Math.PI + Math.random() * Math.PI, v = .6 + Math.random() * 1.4;
+        SCN.parts.push({ x, y, vx: Math.cos(a) * v * 1.6, vy: Math.sin(a) * v * .5, life: 0, max: 700, kind: 'dust', r: 4 + Math.random() * 4 });
+        SCN.parts.push({ x: x + (Math.random() - .5) * 40, y: y - Math.random() * 40, vx: 0, vy: -.25 - Math.random() * .4, life: 0, max: 900, kind: 'spark', r: 3 + Math.random() * 3 });
+      }
+    }
+    const bounce = t => { const n = 7.5625, dd = 2.75; if (t < 1 / dd) return n * t * t; if (t < 2 / dd) return n * (t -= 1.5 / dd) * t + .75; if (t < 2.5 / dd) return n * (t -= 2.25 / dd) * t + .9375; return n * (t -= 2.625 / dd) * t + .984375; };
+    g.save(); g.globalAlpha = Math.min(1, p * 5); g.translate(0, -80 * (1 - bounce(p))); g.drawImage(d.layer.cv, 0, 0, 320, 200); g.restore();
+  }
+  for (let i = SCN.parts.length - 1; i >= 0; i--) {
+    const q = SCN.parts[i]; q.life += 33; if (q.life > q.max) { SCN.parts.splice(i, 1); continue; }
+    q.x += q.vx; q.y += q.vy; q.vx *= .94; const lp = q.life / q.max;
+    if (q.kind === 'dust') { g.fillStyle = `rgba(${HALLOWEEN ? '120,110,140' : '210,190,160'},${.55 * (1 - lp)})`; g.beginPath(); g.arc(q.x, q.y, q.r * (1 + lp * 1.5), 0, 7); g.fill(); }
+    else twinkle(g, q.x, q.y, q.r * (1 - lp), 1 - lp);
+  }
   const c = SCN.poses[now % 3400 < 120 ? 1 : 0], k = SCN.k;   // the host bobs, blinks, and bounces when cheering
   const dy = SCN.mood === 'cheer' ? -Math.abs(Math.sin(now / 140)) * .06 * k : Math.sin(now / 500) * .012 * k;
   g.drawImage(c.cv, c.x0, c.y0 + dy, c.w, c.h);
@@ -2839,12 +3054,12 @@ const SCENES = [
         g.globalAlpha = A * .6 * Math.sin(t * Math.PI); g.fillStyle = H ? '#d9c2ff' : '#fff6d8'; g.beginPath(); g.arc(160 + (sx - .5) * 2 * half + Math.sin(now / 900 + i) * 3, y, .9, 0, 7); g.fill(); }
       g.restore();
     });
-    item('carpet', () => {
+    item('carpet', g => {
       poly(g, [[146, 132], [174, 132], [204, 200], [116, 200]]); g.fillStyle = lg(g, 0, 132, 0, 200, H ? [[0, '#3a0f6a'], [1, '#6a22b0']] : [[0, '#8a0a20'], [1, '#d4203a']]); g.fill();
       g.strokeStyle = H ? '#ff9a2e' : '#ffc53d'; g.lineWidth = 2; g.beginPath(); g.moveTo(149, 132); g.lineTo(121, 200); g.moveTo(171, 132); g.lineTo(199, 200); g.stroke();
       g.fillStyle = H ? 'rgba(255,154,46,.5)' : 'rgba(255,197,61,.45)'; for (const [y, w] of [[146, 4], [166, 5], [190, 6]]) poly(g, [[160, y - w], [160 + w, y], [160, y + w], [160 - w, y]]), g.fill();
     });
-    item('throne', () => obj(g, 160, 100, 64, g => {
+    item('throne', g => obj(g, 160, 100, 64, g => {
       const F = H ? NIGHTIRON : GOLD3, V = H ? VELVET_H : VELVET;
       toy(g, g => { g.beginPath(); g.moveTo(-.32, .3); g.lineTo(-.32, -.18); g.quadraticCurveTo(-.32, -.52, 0, -.58); g.quadraticCurveTo(.32, -.52, .32, -.18); g.lineTo(.32, .3); g.closePath(); }, F, null, { x: -.14, y: -.35, r: .14 });
       toy(g, g => { g.beginPath(); g.moveTo(-.22, .22); g.lineTo(-.22, -.15); g.quadraticCurveTo(-.22, -.42, 0, -.46); g.quadraticCurveTo(.22, -.42, .22, -.15); g.lineTo(.22, .22); g.closePath(); }, V, g => {
@@ -2856,7 +3071,7 @@ const SCENES = [
       for (const x of [-.36, .28]) toy(g, g => rr(g, x, .34, .08, .16, .03), F, null, null);
       obj(g, 0, -.66, .32, g => art('k2')(g));
     }));
-    item('banners', () => { for (const x of [58, 262]) {
+    item('banners', g => { for (const x of [58, 262]) {
       const b = bake(x - 26, 20, 52, 82, g => obj(g, x, 62, 76, g => {
         toy(g, g => { g.beginPath(); g.moveTo(-.2, -.42); g.lineTo(.2, -.42); g.lineTo(.2, .44); g.lineTo(0, .32); g.lineTo(-.2, .44); g.closePath(); }, H ? ROOF_H : ROOF, g => {
           g.fillStyle = lg(g, -.2, 0, .2, 0, [[0, 'rgba(0,0,0,.25)'], [.3, 'rgba(255,255,255,.12)'], [.55, 'rgba(0,0,0,.15)'], [.8, 'rgba(255,255,255,.1)'], [1, 'rgba(0,0,0,.3)']]); g.fillRect(-.25, -.45, .5, .95);
@@ -2868,7 +3083,7 @@ const SCENES = [
       }));
       anim((g, now) => { g.translate(x, 28); g.rotate(Math.sin(now / 1100 + x) * .045); g.translate(-x, -28); g.drawImage(b.cv, b.x0, b.y0, b.w, b.h); }); // gentle sway
     } });
-    item('chandelier', () => {
+    item('chandelier', g => {
       g.strokeStyle = H ? '#2a2038' : '#8a6a2a'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(160, 0); g.lineTo(160, 14); g.stroke();
       obj(g, 160, 22, 70, g => {
         toy(g, g => { g.beginPath(); g.ellipse(0, 0, .42, .08, 0, 0, 7); g.ellipse(0, 0, .32, .045, 0, 0, 7, true); }, H ? NIGHTIRON : GOLD3, null, null);
@@ -2902,20 +3117,20 @@ const SCENES = [
     g.strokeStyle = H ? 'rgba(0,0,0,.25)' : 'rgba(30,90,30,.35)'; g.lineWidth = .8; const R = rng(5); for (let i = 0; i < 90; i++) { const x = R() * 320, y = 125 + R() * 75; g.beginPath(); g.moveTo(x, y); g.lineTo(x - 1.5, y - 4); g.moveTo(x + 1.5, y); g.lineTo(x + 2.5, y - 3.5); g.stroke(); }
     poly(g, [[152, 118], [168, 118], [200, 200], [120, 200]]); g.fillStyle = lg(g, 0, 118, 0, 200, H ? [[0, '#4a3e5c'], [1, '#6a5a7e']] : [[0, '#e8cf98'], [1, '#c9a568']]); g.fill();
     g.fillStyle = H ? 'rgba(0,0,0,.25)' : 'rgba(140,100,50,.3)'; for (const [x, y, w] of [[160, 130, 5], [156, 148, 7], [166, 168, 8], [152, 188, 9]]) { g.beginPath(); g.ellipse(x, y, w, w * .4, 0, 0, 7); g.fill(); }
-    item('arch', () => obj(g, 160, 82, 76, g => {
+    item('arch', g => obj(g, 160, 82, 76, g => {
       toy(g, g => { g.beginPath(); g.moveTo(-.5, .5); g.lineTo(-.5, -.1); g.arc(0, -.1, .5, Math.PI, 0); g.lineTo(.5, .5); g.lineTo(.38, .5); g.lineTo(.38, -.1); g.arc(0, -.1, .38, 0, Math.PI, true); g.lineTo(-.38, .5); g.closePath(); }, H ? LEAF3_H : LEAF3, null, null);
       const rose = H ? { light: '#e0a8ff', base: '#8a35d6', dark: '#3a0f6a', line: '#1a0530' } : { light: '#ff9aa6', base: '#e8263a', dark: '#7a0618', line: '#3a0010' };
       for (let a = 0; a <= 8; a++) { const t = Math.PI + a * Math.PI / 8; ball3d(g, Math.cos(t) * .44, -.1 + Math.sin(t) * .44, .05, rose); }
       for (const y of [.05, .22, .4]) for (const sd of [-1, 1]) ball3d(g, sd * .44, y, .045, rose);
     }));
-    item('hedges', () => { for (const x of [18, 50, 82, 238, 270, 302]) obj(g, x, 126, 40, g => {
+    item('hedges', g => { for (const x of [18, 50, 82, 238, 270, 302]) obj(g, x, 126, 40, g => {
       const L = H ? LEAF3_H : LEAF3, RL = rng(Math.round(x));
       for (const [dx, dy, r] of [[-.28, .06, .26], [.28, .06, .26], [0, -.08, .34]]) toy(g, g => { g.beginPath(); g.arc(dx, dy, r, 0, 7); }, { ...L, gloss: .35 }, g => {
         for (let i = 0; i < 26; i++) { const a = RL() * 7, d = RL() * r, lx = dx + Math.cos(a) * d, ly = dy + Math.sin(a) * d; // leaf clusters
           g.fillStyle = ly < dy - r * .2 ? hexA(L.light, .45) : hexA(L.dark, .45); g.beginPath(); g.ellipse(lx, ly, .05, .03, a, 0, 7); g.fill(); }
       }, { x: dx - r * .3, y: dy - r * .45, r: r * .4 });
     }); });
-    item('fountain', () => obj(g, 160, 160, 92, g => {
+    item('fountain', g => obj(g, 160, 160, 92, g => {
       const W = H ? ['#c6ff9a', '#4fbf2a', '#1a6a10'] : ['#d8f0ff', '#4fa3ff', '#1a5ab0'];
       toy(g, g => { g.beginPath(); g.ellipse(0, .1, .5, .16, 0, 0, 7); }, STONE3, null, null);
       g.beginPath(); g.ellipse(0, .06, .42, .1, 0, 0, 7); g.fillStyle = lg(g, 0, -.04, 0, .16, [[0, W[0]], [.5, W[1]], [1, W[2]]]); g.fill();
@@ -2924,7 +3139,7 @@ const SCENES = [
       anim((g, now) => obj(g, 160, 160, 92, g => fountainWater(g, now, H))); // flowing water, droplets and ripples
       if (H) glowAt(g, 0, 0, .5, 'rgba(150,255,90,.25)');
     }));
-    item('statue', () => obj(g, 262, 150, 64, g => {
+    item('statue', g => obj(g, 262, 150, 64, g => {
       toy(g, g => rr(g, -.24, .1, .48, .38, .03), STONE3, null, null);
       toy(g, g => rr(g, -.3, .06, .6, .08, .02), STONE3, null, null);
       toy(g, g => { g.beginPath(); g.moveTo(-.18, .06); g.lineTo(-.1, -.35); g.lineTo(.1, -.35); g.lineTo(.18, .06); g.closePath(); }, STONE3, null, null);
@@ -2944,14 +3159,14 @@ const SCENES = [
     }
     g.fillStyle = lg(g, 0, 150, 0, 200, H ? [[0, '#22302a'], [1, '#101a14']] : [[0, '#8fae5a'], [1, '#5f7f38']]); g.fillRect(0, 150, 320, 50);
     poly(g, [[146, 158], [174, 158], [206, 200], [114, 200]]); g.fillStyle = H ? '#4a3e5c' : '#c9a97a'; g.fill();
-    item('walls', () => {
+    item('walls', g => {
       g.save(); g.beginPath(); g.rect(56, 84, 208, 76); g.clip();
       bricks(g, 56, 84, 264, 160, 22, 11, H ? 270 : 225, H ? 12 : 10, H ? 22 : 52, 8);
       g.fillStyle = lg(g, 0, 84, 0, 160, [[0, 'rgba(255,255,255,.12)'], [1, 'rgba(0,0,0,.3)']]); g.fillRect(56, 84, 208, 76);
       g.restore();
       for (let x = 56; x < 264; x += 16) obj(g, x + 5, 80, 12, g => toy(g, g => rr(g, -.4, -.45, .8, .9, .08), STONE3, null, null));
     });
-    item('towers', () => { for (const x of [45, 275]) {
+    item('towers', g => { for (const x of [45, 275]) {
       g.save(); g.beginPath(); g.rect(x - 24, 50, 48, 110); g.clip();
       bricks(g, x - 24, 50, x + 24, 160, 16, 10, H ? 270 : 225, H ? 12 : 10, H ? 20 : 48, x);
       g.fillStyle = lg(g, x - 24, 0, x + 24, 0, [[0, 'rgba(0,0,0,.35)'], [.3, 'rgba(255,255,255,.18)'], [.6, 'rgba(0,0,0,0)'], [1, 'rgba(0,0,0,.45)']]); g.fillRect(x - 24, 50, 48, 110);
@@ -2962,7 +3177,7 @@ const SCENES = [
         g.strokeStyle = 'rgba(0,0,30,.25)'; g.lineWidth = .02; for (const y of [-.1, .05, .2]) { g.beginPath(); g.moveTo(-.5, y + .1); g.quadraticCurveTo(0, y + .2, .5, y + .1); g.stroke(); }
       }, { x: -.14, y: .05, r: .12 }));
     } });
-    item('gate', () => obj(g, 160, 132, 56, g => {
+    item('gate', g => obj(g, 160, 132, 56, g => {
       toy(g, g => { g.beginPath(); g.moveTo(-.42, .5); g.lineTo(-.42, -.1); g.arc(0, -.1, .42, Math.PI, 0); g.lineTo(.42, .5); g.closePath(); }, STONE3, null, null);
       toy(g, g => { g.beginPath(); g.moveTo(-.34, .5); g.lineTo(-.34, -.1); g.arc(0, -.1, .34, Math.PI, 0); g.lineTo(.34, .5); g.closePath(); }, H ? { light: '#6a4a3a', base: '#3a2418', dark: '#120a06', line: '#050302' } : WOOD3, g => {
         g.strokeStyle = 'rgba(40,20,5,.5)'; g.lineWidth = .02; for (const x of [-.17, 0, .17]) { g.beginPath(); g.moveTo(x, -.5); g.lineTo(x, .5); g.stroke(); }
@@ -2976,7 +3191,7 @@ const SCENES = [
       g.fillStyle = lg(g, x - 4, 0, x + 4, 0, [[0, '#4a3a2a'], [.4, '#a8845a'], [1, '#3a2a1a']]); poly(g, [[x - 4, 112], [x + 4, 112], [x + 2, 118], [x - 2, 118]]); g.fill();
       anim((g, now) => { const f = flick(now, x); lightGlow(g, x, 108, 18 * f, H ? 'rgba(150,255,90,.3)' : 'rgba(255,170,60,.35)'); flame(g, x, 111, 2.4, f, H); });
     }
-    item('flags', () => { for (const [x, y] of [[45, 0], [275, 0], [160, 50]]) {
+    item('flags', g => { for (const [x, y] of [[45, 0], [275, 0], [160, 50]]) {
       g.strokeStyle = '#3d2412'; g.lineWidth = 1.6; g.beginPath(); g.moveTo(x, y + 18); g.lineTo(x, y - 2); g.stroke();
       anim((g, now) => obj(g, x + 11, y + 3, 22, g => wavingFlag(g, now, x, H)));
     } });

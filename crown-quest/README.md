@@ -14,9 +14,10 @@ Open `index.html` in any browser, or serve the folder (`npx serve crown-quest`) 
 - The King: talks above the board, teaches each power-up the first time you make it, cheers combos, worries when moves run low, and appears in the castle
 - 60 levels (1–11 hand-made, 12–60 generated from a seed) with goals, a move limit and 1–3 stars
 - Hard levels every 5th level from 10 on (red on the map, double coins)
+- Rescue levels (5, 13, 22, 31, 41, 48, 56, teal on the map): rubble pours toward the King (or the Count) against a clock; break every rubble block on the board to save him. Each block broken buys 2 seconds. Timers live in `RESCUE_TIME`, layouts in `genRescue()`
 - King's Bonus: leftover moves become rockets when you win
 - Level map, coins, boosters (hammer, arrow, cannon, shuffle), +5 moves on a loss
-- Castle meta: spend stars to rebuild the Throne Room, Royal Garden and Castle Gate
+- Castle meta: spend stars to rebuild the Throne Room, Royal Garden and Castle Gate; scenes are animated and new items drop in with dust and sparkles
 - Sound: synthesised effects for every action, a looping lute-and-drum tune, and separate Music / Sound effects switches (Sound button on the map). Works with the iPhone silent switch on.
 - Halloween theme: switches on automatically in October (toggle in Settings). Bats, ghosts, jack-o'-lanterns, slimes and witch hats; tombstones and cobwebs; a graveyard map; an organ tune; and Count Dracula (public domain, Bram Stoker 1897) as host
 - Progress saves to `localStorage`
@@ -38,6 +39,7 @@ Open `index.html` in any browser, or serve the folder (`npx serve crown-quest`) 
 npm i -D playwright && npx playwright install chromium
 node crown-quest/tools/calibrate.cjs crown-quest/index.html 50 150   # moves the bot needed per level
 node crown-quest/tools/calibrate.cjs crown-quest/index.html 50 0     # win rate with the real move counts
+node crown-quest/tools/calibrate.cjs crown-quest/index.html 40 150 5,13,22   # just these levels
 ```
 
 Current targets: tutorial levels are near-certain wins, normal levels ease from ~88% to ~75% bot win
