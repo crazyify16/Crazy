@@ -18,6 +18,7 @@ Open `index.html` in any browser, or serve the folder (`npx serve crown-quest`) 
 - Level map, coins, boosters (hammer, arrow, cannon, shuffle), +5 moves on a loss
 - Castle meta: spend stars to rebuild the Throne Room, Royal Garden and Castle Gate
 - Sound: synthesised effects for every action, a looping lute-and-drum tune, and separate Music / Sound effects switches (Sound button on the map). Works with the iPhone silent switch on.
+- Halloween theme: switches on automatically in October (toggle in Settings). Bats, ghosts, jack-o'-lanterns, slimes and witch hats; tombstones and cobwebs; a graveyard map; an organ tune; and Count Dracula (public domain, Bram Stoker 1897) as host
 - Progress saves to `localStorage`
 
 ## Where to tweak
