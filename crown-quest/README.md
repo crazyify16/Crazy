@@ -2,6 +2,8 @@
 
 A Royal Match-style match-3 prototype in a single HTML file (no build step, no dependencies).
 
+`icon-512.png` is the app icon (the game also sets it as the favicon and home-screen icon at runtime).
+
 Open `index.html` in any browser, or serve the folder (`npx serve crown-quest`) and open it on a phone.
 
 ## What's in it
