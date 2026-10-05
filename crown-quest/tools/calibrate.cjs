@@ -1,5 +1,6 @@
 // Crown Quest balance tool. Plays every level many times with a greedy "decent player" bot,
-// animations disabled, and reports how many moves the bot needed.
+// animations disabled, and reports how many moves the bot needed. Rescue levels are skipped: their
+// rubble is a real-time physics simulation, so their timers are set by hand.
 //
 //   node calibrate.cjs index.html 50 150   # moves needed per level (50 games, 150-move budget)
 //   node calibrate.cjs index.html 50 0     # budget 0 = use each level's real move count; reports win rate
@@ -32,12 +33,9 @@ fs.writeFileSync(COPY, s);
       const bgoal = new Set(G.goals.filter(g => g.type !== 'color' && g.left > 0).map(g => g.type));
       const at = (r, c) => r >= 0 && c >= 0 && r < G.rows && c < G.cols ? G.grid[r][c] : null;
       let best = null, bs = -1;
-      const rockTop = {}; // rescue levels: matches under a boulder open its road
-      for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) { const t = G.grid[r][c].tile; if (t && t.rock && rockTop[c] === undefined) rockTop[c] = r; }
       const consider = (sc, mv) => { sc += Math.random() * .5; if (sc > bs) { bs = sc; best = mv; } };
       for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) {
         const A = at(r, c); if (!A || A.hole || !A.tile || A.b) continue;
-        if (A.tile.rock) { /* boulders can still be swapped, handled below */ }
         if (A.tile.sp) consider(A.tile.sp === 'ball' ? 34 : 26, ['tap', r, c]);
         for (const [dr, dc] of [[0, 1], [1, 0]]) {
           const B = at(r + dr, c + dc); if (!B || B.hole || !B.tile || B.b || A.ice || B.ice) continue;
@@ -55,7 +53,6 @@ fs.writeFileSync(COPY, s);
                 if (need.has(t.tile.k)) sc += 2;
                 if (t.ice && bgoal.has('ice')) sc += 3;
                 sc += y / G.rows * .4;
-                if (rockTop[x] !== undefined && rockTop[x] < y) sc += 6;
                 for (const [a, bb] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) { const n = at(y + a, x + bb); if (n && n.b && bgoal.has(n.b.t) && !hit.has((y + a) * 99 + x + bb)) { hit.add((y + a) * 99 + x + bb); sc += 3; } }
               }
             }
@@ -69,6 +66,7 @@ fs.writeFileSync(COPY, s);
     const res = {};
     for (let n = 1; n <= T.LEVEL_COUNT; n++) {
       if (ONLY && !ONLY.includes(n)) continue;
+      T.startLevel(n); if (T.G.def.rescue) continue; // rescue levels run on real-time rubble physics, not moves
       const t0 = performance.now();
       const used = []; let fails = 0;
       for (let k = 0; k < RUNS; k++) {

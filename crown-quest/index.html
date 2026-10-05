@@ -577,22 +577,24 @@ const MOVES = [
 const isHard = n => n >= 10 && n % 5 === 0;
 // Rescue levels: rubble pours toward the King; break every rubble block on the board before time runs out.
 const RESCUE_LEVELS = [5, 13, 22, 31, 41, 48, 56];
-// Starting seconds per rescue level: about 3.2 s per move the bot needed (median, tools/calibrate.cjs with a
-// 150-move budget), less some of the time won back as boulders drop. The first rescue is extra gentle.
-const RESCUE_TIME = [45, 55, 75, 75, 90, 100, 100];
+// Seconds before the drills reach the host. Rescue boards don't refill, so these can't be measured by the
+// move-count bot (the rubble needs real-time physics). A real-time bot with 0.9s of thinking per move wins them
+// in 7-25s; these give a person roughly twice what they need at about 3s a move.
+const RESCUE_TIME = [40, 45, 50, 55, 70, 65, 65];
 const isRescue = n => RESCUE_LEVELS.includes(n);
+// A rescue board has no refill. Above it hangs a shaft full of loose pebble rubble ('R' cells start full of
+// pebbles too). Clear pieces so the rubble can pour down through the holes and out of the bottom of the board.
 function genRescue(n) {
-  const idx = RESCUE_LEVELS.indexOf(n), rows = 8, cols = 8;  // a shorter board: less road to clear under each boulder
+  const idx = RESCUE_LEVELS.indexOf(n), rows = 7, cols = 8;
   const L = Array.from({ length: rows }, () => Array(cols).fill('.'));
-  // 'R' is a loose boulder resting on the pieces below it. Clear the road under it and it falls;
-  // when it reaches the bottom of the board it drops off, which is what saves the host.
-  const pile = (w0, h, right) => { for (let r = 0; r < h; r++) for (let c = 0; c < Math.max(1, w0 - Math.floor(r * w0 / h)); c++) L[r][right ? cols - 1 - c : c] = 'R'; };
-  const [lw, lh, rw, rh] = [[2, 2, 0, 0], [3, 2, 0, 0], [2, 2, 2, 2], [3, 2, 2, 2], [3, 2, 2, 2], [3, 3, 2, 2], [3, 3, 2, 2]][idx];
-  pile(lw, lh, false); if (rw) pile(rw, rh, true);
-  if (idx === 4) for (const c of [2, 3, 4, 5]) L[6][c] = 'C';           // crates block the middle roads
-  if (idx === 6) for (const c of [0, 1, 6, 7]) L[7][c] = 'C';           // and here the outer ones
-  const rocks = L.flat().filter(ch => ch === 'R').length;
-  return { m: 9999, k: n < 13 ? 4 : 5, g: [], L: L.map(r => r.join('')), rescue: { time: RESCUE_TIME[idx] || Math.round(30 + rocks * 4), relief: 4 } };
+  const right = idx % 2 === 1, w = idx >= 4 ? 4 : 3, x0 = right ? cols - w : 0, h = idx >= 5 ? 3.4 : idx >= 2 ? 3 : 2.5;
+  const col = c => right ? cols - 1 - c : c;
+  for (let c = 0; c < w; c++) L[0][col(c)] = 'R';
+  if (idx >= 2) for (let c = 0; c < w - 1; c++) L[1][col(c)] = 'R';
+  if (idx === 2 || idx === 3 || idx === 5) for (const c of [1, 2]) L[4][col(c)] = 'C';      // crates in the way
+  if (idx === 4 || idx === 6) for (const c of [1, 2]) L[3][col(c)] = 'S';                   // stones in the way
+  if (idx === 6) for (const c of [0, 3]) L[5][col(c)] = 'C';
+  return { m: 9999, k: n < 13 ? 4 : 5, g: [], L: L.map(r => r.join('')), rescue: { time: RESCUE_TIME[idx] || 100, x0, w, h } };
 }
 function getLevel(n) {
   if (isRescue(n)) return { ...genRescue(n), hard: false }; const def = n <= HAND.length ? HAND[n - 1] : genLevel(n); return { ...def, m: MOVES[n - 1] || def.m, hard: isHard(n) }; }
@@ -808,11 +810,11 @@ const DRAW = {
     g.beginPath(); g.moveTo(.1, .4); g.lineTo(.16, .18); g.lineTo(.36, .1); g.moveTo(.16, .18); g.lineTo(.06, .06); g.stroke();
     twinkle(g, -.28, -.28, .07);
   },
-  rubble1(g) { // a loose boulder with teal crystals and a fleck of gold
-    toy(g, g => { g.beginPath(); g.moveTo(-.37, .2); g.quadraticCurveTo(-.46, -.14, -.2, -.33); g.quadraticCurveTo(.06, -.46, .3, -.3); g.quadraticCurveTo(.47, -.12, .41, .15); g.quadraticCurveTo(.35, .4, .02, .4); g.quadraticCurveTo(-.32, .4, -.37, .2); g.closePath(); }, PAL.rock, g => {
-      g.strokeStyle = 'rgba(40,44,60,.45)'; g.lineWidth = .025; g.beginPath(); g.moveTo(-.1, -.3); g.lineTo(-.02, -.1); g.lineTo(-.12, .08); g.moveTo(-.02, -.1); g.lineTo(.16, -.02); g.stroke();
-      for (const [x, y, c] of [[.2, .14, '#3fd6c0'], [-.22, .16, '#3fd6c0'], [.12, -.2, '#ffc20d']]) { poly(g, [[x, y - .06], [x + .045, y], [x, y + .06], [x - .045, y]]); g.fillStyle = c; g.fill(); }
-    }, { x: -.15, y: -.2, r: .16 });
+  rubble1(g) { // a little heap of pebbles, teal crystals and gold nuggets
+    const R = rng(5), rocks = [];
+    for (let i = 0; i < 14; i++) { const a = R() * 7, d = Math.sqrt(R()) * .32; rocks.push([Math.cos(a) * d, Math.sin(a) * d * .8 + .05, .1 + R() * .05, R()]); }
+    rocks.sort((a, b) => a[1] - b[1]);
+    for (const [x, y, r, v] of rocks) toy(g, g => { g.beginPath(); g.ellipse(x, y, r, r * .85, v * 3, 0, 7); }, v < .1 ? PAL.gold : v < .28 ? { light: '#b8f0e0', base: '#4fb8a0', dark: '#1f6a5a', line: '#0a3028' } : PAL.rock, null, { x: x - r * .3, y: y - r * .4, r: r * .45 });
   },
   iceGoal(g) { g.save(); g.scale(.85, .85); art('k3')(g); g.restore(); art('ice')(g); },
   star(g) {
@@ -1180,7 +1182,7 @@ const playable = (r, c) => inB(r, c) && !G.grid[r][c].hole;
 function kindAt(r, c) {
   if (!inB(r, c)) return -1;
   const cell = G.grid[r][c];
-  if (cell.hole || cell.b || !cell.tile || cell.tile.sp || cell.tile.rock) return -1;
+  if (cell.hole || cell.b || !cell.tile || cell.tile.sp) return -1;
   return cell.tile.k;
 }
 const randKind = () => Math.floor(Math.random() * G.def.k);
@@ -1197,7 +1199,7 @@ function startLevel(n) {
       if (ch === 'C' || ch === 'D') { cell.b = { t: 'crate', hp: ch === 'C' ? 1 : 2, v: { s: 1, rot: 0 } }; crates++; }
       if (ch === 'S') { cell.b = { t: 'stone', hp: 2, v: { s: 1, rot: 0 } }; stones++; }
       if (ch === 'I') { cell.ice = 1; ices++; }
-      if (ch === 'R') rubble++;
+
       grid[r].push(cell);
     }
   }
@@ -1205,11 +1207,12 @@ function startLevel(n) {
   if (crates) goals.push({ type: 'crate', left: crates, shown: crates });
   if (stones) goals.push({ type: 'stone', left: stones, shown: stones });
   if (ices) goals.push({ type: 'ice', left: ices, shown: ices });
-  if (rubble) goals.push({ type: 'rubble', left: rubble, shown: rubble });
+  if (def.rescue) goals.push({ type: 'rubble', left: 0, shown: 0 }); // set once the rubble is poured in
   G = { n, def, rows, cols, grid, goals, moves: def.m, busy: false, over: false, sel: null, booster: null,
     dying: [], dyingB: [], dyingIce: [], fx: [], parts: [], pending: new Set(), claimed: new Set(), chain: 0, shake: 0, hint: null, cs: 40, ox: 6, oy: 6 };
   G.peril = def.rescue ? makePeril() : null; G.tLeft = def.rescue ? def.rescue.time : 0; G.started = false;
   fillBoard();
+  G.rubble = def.rescue ? makeRubble() : null;
   show('game');
   $('#peril').hidden = !def.rescue; document.querySelector('.kingrow').hidden = !!def.rescue;
   $('#lvlLabel').textContent = 'Level ' + n + (def.hard ? ' \u00b7 Hard' : '');
@@ -1227,7 +1230,7 @@ function fillBoard() {
       const cell = G.grid[r][c]; cell.tile = null;
       if (cell.hole || cell.b) continue;
       cell.tile = newTile(0, r, c);
-      if (G.def.L[r][c] === 'R') { cell.tile.k = -2; cell.tile.rock = true; continue; }
+      if (G.def.L[r][c] === 'R') { cell.tile = null; continue; } // starts full of rubble
       for (let t = 0; t < 30; t++) { cell.tile.k = randKind(); if (!matchAt(r, c)) break; }
     }
     if (findMove() && !findMatches().length) return;
@@ -1359,7 +1362,6 @@ function hitCell(r, c, ctx) {
   if (cell.b) { hitBlocker(r, c); return; }
   if (cell.ice) { hitIce(r, c); return; }
   const t = cell.tile; if (!t) return;
-  if (t.rock) return; // boulders shrug off blasts; they only leave by falling off the board
   if (t.sp) { cell.tile = null; track(fire(r, c, t, { chained: true })); return; }
   clearTile(r, c);
 }
@@ -1446,7 +1448,7 @@ function pickTarget(exclude) {
     if (cell.hole || exclude.has(key) || G.claimed.has(key)) continue;
     if (cell.b) (goalFor(cell.b.t) ? prim : sec).push([r, c]);
     else if (cell.ice) (goalFor('ice') ? prim : sec).push([r, c]);
-    else if (cell.tile && !cell.tile.sp && !cell.tile.rock) (goalFor('color', cell.tile.k) ? prim : sec).push([r, c]);
+    else if (cell.tile && !cell.tile.sp) (goalFor('color', cell.tile.k) ? prim : sec).push([r, c]);
   }
   const pool = prim.length ? prim : sec;
   return pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
@@ -1471,7 +1473,7 @@ async function propeller(r, c, ctx, carry, skipNeighbors) {
 }
 function mostCommonColor() {
   const count = Array(5).fill(0);
-  for (const row of G.grid) for (const cell of row) if (cell.tile && !cell.tile.sp && !cell.tile.rock && !cell.b) count[cell.tile.k]++;
+  for (const row of G.grid) for (const cell of row) if (cell.tile && !cell.tile.sp && !cell.b) count[cell.tile.k]++;
   const wanted = G.goals.filter(g => g.type === 'color' && g.left > 0 && count[g.c] > 0).map(g => g.c);
   if (wanted.length) return wanted.sort((a, b) => count[b] - count[a])[0];
   return count.indexOf(Math.max(...count));
@@ -1617,27 +1619,10 @@ async function resolveGroups(groups, pref) {
   }
   await delay(spawns.length ? 120 : 210);
 }
-// The lowest open cell of a column (where boulders leave), or -1 if something solid sits there.
-function bottomOf(c) { for (let r = G.rows - 1; r >= 0; r--) { const cell = G.grid[r][c]; if (!cell.hole) return cell.b ? -1 : r; } return -1; }
-async function collectRocks() {
-  let n = 0;
-  for (let c = 0; c < G.cols; c++) {
-    const r = bottomOf(c); if (r < 0) continue;
-    const t = G.grid[r][c].tile; if (!t || !t.rock) continue;
-    G.grid[r][c].tile = null; n++;
-    const goal = goalFor('rubble'); if (goal) { goal.left--; flyToGoal(goal, r, c); }
-    if (G.peril) rescueRelief(r, c);
-    G.dying.push(t); tween(t, { y: t.y + 1.8, a: 0, rot: (Math.random() - .5) * 1.4 }, 420, easeIn).then(() => removeFrom(G.dying, t)); // tumbles off the board
-    burst(r, c, '#aab0c2', 8, 'chip'); sfx.crack('stone');
-  }
-  if (n) await delay(280);
-  return n > 0;
-}
 async function cascade() {
   for (let guard = 0; guard < 80; guard++) {
     await flush();
     await settle();
-    if (await collectRocks()) continue;
     const groups = findMatches();
     if (!groups.length) { if (G.pending.size) continue; break; }
     await resolveGroups(groups, null);
@@ -1656,7 +1641,7 @@ function gravity() {
         for (const y of seg) { const t = G.grid[y][c].tile; if (t) { tiles.push(t); G.grid[y][c].tile = null; } }
         seg.forEach((y, i) => {
           if (i < tiles.length) { const t = tiles[i]; G.grid[y][c].tile = t; if (t.y !== y || t.x !== c) mv.push({ t, r: y, c }); }
-          else if (r === -1) { const t = newTile(randKind(), y, c); t.y = spawnY--; G.grid[y][c].tile = t; pickRefillKind(y, c, t); mv.push({ t, r: y, c }); }
+          else if (r === -1 && !G.def.rescue) { const t = newTile(randKind(), y, c); t.y = spawnY--; G.grid[y][c].tile = t; pickRefillKind(y, c, t); mv.push({ t, r: y, c }); }
         });
         seg = [];
       } else if (!cell.hole) seg.push(r);
@@ -1673,6 +1658,7 @@ function pickRefillKind(r, c, t) {
 }
 function diagonal() {
   const mv = [], used = new Set();
+  if (G.def.rescue) return mv;
   for (let r = G.rows - 1; r >= 1; r--) for (let c = 0; c < G.cols; c++) {
     const cell = G.grid[r][c]; if (cell.hole || cell.b || cell.tile) continue;
     let ra = r - 1; while (ra >= 0 && G.grid[ra][c].hole) ra--;
@@ -1724,7 +1710,7 @@ async function endTurn() {
 async function shuffleBoard() {
   banner('Shuffle!'); sfx.shuffle(); await delay(400);
   const cells = [];
-  for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) { const t = G.grid[r][c].tile; if (t && !t.sp && !t.rock && !G.grid[r][c].b && !G.grid[r][c].ice) cells.push(t); }
+  for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) { const t = G.grid[r][c].tile; if (t && !t.sp && !G.grid[r][c].b && !G.grid[r][c].ice) cells.push(t); }
   await Promise.all(cells.map(t => tween(t, { s: .2 }, 200, easeIn)));
   const kinds = cells.map(t => t.k);
   let ok = false;
@@ -1741,14 +1727,14 @@ async function winFlow() {
   G.over = true; kingSay(SP('Hooray! You did it, hero!', 'Bwah-ha-ha! Spooktacular, my friend!'), 'cheer', 1e9, 3);
   const rescue = G.def.rescue, left = rescue ? 0 : G.moves, m = G.def.m, T0 = rescue ? rescue.time : 1;
   const stars = rescue ? (G.tLeft >= T0 * .45 ? 3 : G.tLeft >= T0 * .2 ? 2 : 1) : left >= Math.ceil(m * .28) ? 3 : left >= Math.ceil(m * .1) ? 2 : 1;
-  if (rescue) { G.peril.state = 'saved'; G.peril.t0 = performance.now(); }
+  if (rescue) { G.peril.state = 'saved'; G.peril.t0 = performance.now(); G.rubble.flush = true; } // the rest of the heap pours away
   await delay(250); sfx.win(); banner(rescue ? SP('King saved!', 'Count saved!') : SP('Level Complete!', 'Spooktacular!')); confetti(REDUCED ? 40 : 140); await delay(1100);
   if (left > 0) {
     banner(SP("King's Bonus!", "Count's Bonus!")); await delay(500);
     const n = Math.min(left, 12);
     for (let i = 0; i < n; i++) {
       const pool = [];
-      for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) { const t = G.grid[r][c].tile; if (t && !t.sp && !t.rock && !G.grid[r][c].ice) pool.push(t); }
+      for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) { const t = G.grid[r][c].tile; if (t && !t.sp && !G.grid[r][c].ice) pool.push(t); }
       if (!pool.length) break;
       const t = pool[Math.floor(Math.random() * pool.length)];
       t.sp = Math.random() < .5 ? 'rh' : 'rv'; t.k = -1; t.s = .3; tween(t, { s: 1 }, 220, easeBack);
@@ -2062,24 +2048,98 @@ function banner(text) {
 
 
 /* =========================================================
-   Rescue levels: the danger window above the board
+   Rescue levels: loose pebble rubble (real physics) and the danger window
    ========================================================= */
-function makePeril() {
-  const rocks = [];
-  for (let i = 0; i < 150; i++) { const u = Math.random(); rocks.push({ u, v: Math.random(), k: Math.random() < .07 ? 3 : Math.random() < .2 ? 2 : Math.random() < .55 ? 0 : 1, s: .8 + Math.random() * .5 }); }
-  rocks.sort((a, b) => a.v - b.v);
-  return { pDisp: 0, rocks, falling: [], drops: 0, state: 'danger', t0: 0 };
+// Every pebble is a particle: gravity, pebble-on-pebble collisions, and collisions with pieces, obstacles
+// and walls. Empty cells are open, and so is the bottom edge of the board, where pebbles pour out.
+const PEB_R = .17; // pebble radius, in cells
+function makeRubble() {
+  const R = G.def.rescue, list = [], r = PEB_R;
+  const fill = (x0, y0, x1, y1) => {
+    for (let y = y1 - r, row = 0; y > y0 + r * .4; y -= r * 1.72, row++)
+      for (let x = x0 + r + (row % 2) * r * .9; x < x1 - r * .9; x += r * 1.95) {
+        const v = Math.random(), px0 = x + (Math.random() - .5) * .03;
+        list.push({ x: px0, y, px: px0, py: y, k: v < .1 ? 3 : v < .3 ? 2 : v < .66 ? 0 : 1, s: .85 + Math.random() * .4 });
+      }
+  };
+  fill(R.x0, -R.h, R.x0 + R.w, 0);
+  for (let rr = 0; rr < G.rows; rr++) for (let c = 0; c < G.cols; c++) if (G.def.L[rr][c] === 'R') fill(c, rr, c + 1, rr + 1);
+  const need = Math.ceil(list.length * .9);   // pour out 90% to save him (a few pebbles always get stuck on ledges)
+  const goal = G.goals.find(g => g.type === 'rubble'); goal.left = goal.shown = need;
+  return { p: list, total: list.length, need, drained: 0, flush: false };
 }
+function solidCell(c, r) {
+  if (c < 0 || c >= G.cols) return true;
+  if (r < 0 || r >= G.rows || G.rubble.flush) return false;   // the air above, and the open bottom edge
+  const cell = G.grid[r][c]; return cell.hole || !!cell.b || !!cell.tile;
+}
+function collideSolids(q, R) {
+  const r = PEB_R;
+  if (q.y < 0) { if (q.x < R.x0 + r) q.x = R.x0 + r; if (q.x > R.x0 + R.w - r) q.x = R.x0 + R.w - r; } // shaft walls
+  if (q.x < r) q.x = r; if (q.x > G.cols - r) q.x = G.cols - r;
+  for (let c = Math.floor(q.x - r); c <= Math.floor(q.x + r); c++) for (let rr = Math.floor(q.y - r); rr <= Math.floor(q.y + r); rr++) {
+    if (!solidCell(c, rr)) continue;
+    const nx = Math.max(c, Math.min(q.x, c + 1)), ny = Math.max(rr, Math.min(q.y, rr + 1));
+    const dx = q.x - nx, dy = q.y - ny, dd = dx * dx + dy * dy;
+    if (dd > r * r) continue;
+    if (dd < 1e-9) { // a piece fell onto this pebble: pop it out of the nearest face, preferring up
+      const up = q.y - rr, dn = (rr + 1 - q.y) * 1.6, lf = q.x - c, rt = c + 1 - q.x, m = Math.min(up, dn, lf, rt);
+      if (m === up) q.y = rr - r; else if (m === lf) q.x = c - r; else if (m === rt) q.x = c + 1 + r; else q.y = rr + 1 + r;
+      q.px = q.x; q.py = q.y; continue;
+    }
+    const dist = Math.sqrt(dd), k = (r - dist) / dist; q.x += dx * k; q.y += dy * k;
+  }
+}
+function stepRubble(dtMs) {
+  const RB = G.rubble, R = G.def.rescue, r = PEB_R, d = 2 * r, d2 = d * d, sub = 2, h = Math.min(dtMs, 34) / 1000 / sub, acc = 28;
+  for (let s = 0; s < sub; s++) {
+    for (const q of RB.p) { const vx = (q.x - q.px) * .985, vy = (q.y - q.py) * .985; q.px = q.x; q.py = q.y; q.x += vx; q.y += vy + acc * h * h; }
+    for (let it = 0; it < 3; it++) {
+      const hash = new Map(), key = (i, j) => (i + 64) * 4096 + (j + 64);
+      for (const q of RB.p) { const k = key(Math.floor(q.x / d), Math.floor(q.y / d)); let b = hash.get(k); if (!b) hash.set(k, b = []); b.push(q); }
+      for (const q of RB.p) {
+        const i0 = Math.floor(q.x / d), j0 = Math.floor(q.y / d);
+        for (let i = i0 - 1; i <= i0 + 1; i++) for (let j = j0 - 1; j <= j0 + 1; j++) {
+          const b = hash.get(key(i, j)); if (!b) continue;
+          for (const o of b) {
+            if (o === q) continue;
+            let dx = o.x - q.x, dy = o.y - q.y; const dd = dx * dx + dy * dy;
+            if (dd >= d2 || dd < 1e-12) continue;
+            const dist = Math.sqrt(dd), push = (d - dist) / dist * .25; dx *= push; dy *= push;
+            q.x -= dx; q.y -= dy; o.x += dx; o.y += dy;
+          }
+        }
+      }
+      for (const q of RB.p) collideSolids(q, R);
+    }
+  }
+  let out = 0;
+  for (let i = RB.p.length - 1; i >= 0; i--) {
+    const q = RB.p[i]; if (q.y < G.rows + .45) continue;
+    RB.p.splice(i, 1); RB.drained++; out++;
+    const br = board.getBoundingClientRect(), cs = G.cs; // it keeps falling down the screen
+    SPILL.push({ x: br.left + G.ox + q.x * cs, y: br.top + G.oy + q.y * cs, vx: (q.x - q.px) * cs, vy: Math.max(2, (q.y - q.py) * cs), k: q.k, s: 2 * PEB_R * cs * q.s * 1.15 });
+  }
+  if (out) {
+    const goal = G.goals.find(g => g.type === 'rubble'), before = goal.left;
+    goal.left = goal.shown = Math.max(0, RB.need - RB.drained);
+    if (goal.left !== before) renderGoalCounts(Math.floor(before / 5) !== Math.floor(goal.left / 5) ? goal : null);
+    if (!throttle('pour', 90)) nz({ dur: .12, vol: .06, bp: 900 + Math.random() * 900, q: 2, verb: .1 }); // a rattle of falling stones
+  }
+}
+function drawRubbleSim(g) {
+  const cs = G.cs, sz = 2 * PEB_R * cs * 1.15;
+  for (const q of G.rubble.p) drawRock(g, q.k, G.ox + q.x * cs, G.oy + q.y * cs, sz * q.s);
+}
+function makePeril() { return { pDisp: 0, state: 'danger', t0: 0 }; }
 function tickRescue(dt) {
+  if (G.rubble && ($('#modal').hidden || G.rubble.flush)) stepRubble(dt);
   if (!G.started || G.over || !$('#modal').hidden) return;
+  if (!G.busy && G.goals.every(g => g.left <= 0)) { G.busy = true; winFlow(); return; }   // enough rubble poured out
   G.tLeft -= dt / 1000;
   if (G.tLeft <= 0) { G.tLeft = 0; if (!G.busy) rescueFail(); }
   const sec = Math.ceil(G.tLeft);
   if (sec !== G.shownSec) { G.shownSec = sec; updateHud(); if (sec <= 10 && sec > 0) sfx.tick(); }
-}
-function rescueRelief(r, c) { // every rubble block broken sends rocks down the trapdoor and buys time
-  G.tLeft += G.def.rescue.relief; G.peril.drops += 7; updateHud();
-  G.fx.push(floatText(r, c, `+${G.def.rescue.relief}s`, '#7be04a'));
 }
 function rescueFail() {
   if (G.over) return;
@@ -2091,7 +2151,7 @@ function rescueFail() {
 }
 function showRescueLose() {
   const goals = G.goals.filter(g => g.left > 0).map(g => ({ key: goalKey(g), n: g.left })), cost = 60;
-  const card = modal(`<h3>Oh no!</h3><p>${SP('The King', 'The Count')} got squished! Drop the boulders off the board faster to save him.</p>${goalIconsHtml(goals)}
+  const card = modal(`<h3>Oh no!</h3><p>The ${SP('drills', 'spikes')} got ${SP('the King', 'the Count')}! Open a path to the bottom faster so the rubble pours out.</p>${goalIconsHtml(goals)}
     <div class="row"><button class="btn blue" data-a="more" ${S.coins < cost ? 'disabled' : ''}>+20 seconds · ${cost} coins</button></div>
     <div class="row"><button class="btn ghost" data-a="map">Map</button><button class="btn green" data-a="retry">Retry</button></div>`);
   fillGoalIcons(card, goals);
@@ -2112,7 +2172,7 @@ function cachedArt(id, px, draw) {
 }
 function drawRock(g, k, x, y, size) {
   const px = Math.max(4, Math.round(size * DPR / 2) * 2);
-  g.drawImage(cachedArt('rock' + k, px, g => toy(g, g => { g.beginPath(); g.ellipse(0, 0, .44, .36, k * .7, 0, 7); }, ROCK_PALS[k], null, { x: -.14, y: -.14, r: .18 })), x - size / 2, y - size / 2, size, size);
+  g.drawImage(cachedArt('rock' + k, px, g => toy(g, g => { g.beginPath(); g.moveTo(-.4, -.1); g.lineTo(-.15, -.4); g.lineTo(.3, -.32); g.lineTo(.42, .05); g.lineTo(.2, .38); g.lineTo(-.28, .32); g.closePath(); }, ROCK_PALS[k], null, { x: -.14, y: -.16, r: .16 })), x - size / 2, y - size / 2, size, size);
 }
 function hostImage(mood, px, blink) { // the King (or the Count), feet at the bottom of the image
   return cachedArt('host' + mood + blink + HALLOWEEN, px, g => { g.translate(0, -.02); drawKing(g, mood, blink ? 3450 : 500); });
@@ -2120,25 +2180,31 @@ function hostImage(mood, px, blink) { // the King (or the Count), feet at the bo
 function bakePerilBg(W, H) {
   const cv = document.createElement('canvas'); cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
   const g = cv.getContext('2d'); g.scale(DPR, DPR);
-  const floorY = H * .84, kingX = W * .8, Hw = HALLOWEEN;
-  bricks(g, 0, 0, W, floorY, 30, 13, Hw ? 272 : 28, Hw ? 22 : 16, Hw ? 12 : 30, 11);
-  const light = g.createRadialGradient(kingX, H * .45, 10, kingX, H * .45, W * .6); light.addColorStop(0, Hw ? 'rgba(150,90,220,.25)' : 'rgba(255,220,150,.28)'); light.addColorStop(1, 'rgba(0,0,0,.35)');
-  g.fillStyle = light; g.fillRect(0, 0, W, H);
-  // the door the host is trapped against
-  const dw = W * .1, dh = H * .6;
-  g.beginPath(); g.moveTo(kingX - dw, floorY); g.lineTo(kingX - dw, floorY - dh + dw); g.arc(kingX, floorY - dh + dw, dw, Math.PI, 0); g.lineTo(kingX + dw, floorY); g.closePath();
-  g.fillStyle = Hw ? '#ff9a2e' : '#e0a52a'; g.fill();
+  const floorY = H * .86, kingX = W * .3, Hw = HALLOWEEN;
+  g.fillStyle = lg(g, 0, 0, 0, floorY, Hw ? [[0, '#2a1240'], [1, '#14081f']] : [[0, '#1f6a4a'], [1, '#0f3a28']]); g.fillRect(0, 0, W, floorY); // wallpaper
+  g.fillStyle = 'rgba(0,0,0,.18)'; for (let x = 0; x < W; x += 14) g.fillRect(x, 0, 6, floorY);
+  const dw = W * .1, dh = H * .66; // the door behind the host
+  g.beginPath(); g.moveTo(kingX - dw, floorY); g.lineTo(kingX - dw, floorY - dh + dw); g.arc(kingX, floorY - dh + dw, dw, Math.PI, 0); g.lineTo(kingX + dw, floorY); g.closePath(); g.fillStyle = Hw ? '#ff9a2e' : '#e0a52a'; g.fill();
   g.beginPath(); g.moveTo(kingX - dw * .82, floorY); g.lineTo(kingX - dw * .82, floorY - dh + dw); g.arc(kingX, floorY - dh + dw, dw * .82, Math.PI, 0); g.lineTo(kingX + dw * .82, floorY); g.closePath();
-  g.fillStyle = lg(g, 0, floorY - dh, 0, floorY, Hw ? [[0, '#2a1240'], [1, '#12081e']] : [[0, '#1f5a3a'], [1, '#0f2e1e']]); g.fill();
-  // ceiling beam with the hole the rubble pours from
-  g.fillStyle = lg(g, 0, 0, 0, H * .08, [[0, '#2a1a10'], [1, '#5a3a20']]); g.fillRect(0, 0, W, H * .08);
-  g.fillStyle = '#05030a'; rr(g, W * .045, 0, W * .1, H * .07, 3); g.fill();
-  // floor with a trapdoor under the heap
-  g.fillStyle = lg(g, 0, floorY, 0, H, Hw ? [[0, '#3a2a52'], [1, '#1a0f24']] : [[0, '#8a5a32'], [1, '#4a2e18']]); g.fillRect(0, floorY, W, H - floorY);
-  g.fillStyle = 'rgba(0,0,0,.25)'; for (let x = 0; x < W; x += 26) g.fillRect(x, floorY, 1.5, H - floorY);
-  g.fillStyle = lg(g, 0, floorY, 0, H, [[0, '#000000'], [1, Hw ? '#1a0f24' : '#2a160a']]); g.fillRect(W * .04, floorY + 2, W * .4, H - floorY - 2); // trapdoor pit
-  g.strokeStyle = Hw ? '#5a4a6e' : '#a8784a'; g.lineWidth = 2; g.strokeRect(W * .04, floorY + 2, W * .4, H - floorY - 1);
+  g.fillStyle = lg(g, 0, floorY - dh, 0, floorY, [[0, '#a8743e'], [1, '#6a4422']]); g.fill();
+  g.fillStyle = Hw ? '#3a1020' : '#8a1020'; g.fillRect(0, floorY, W, H - floorY);   // carpet
+  g.fillStyle = 'rgba(0,0,0,.3)'; g.fillRect(0, floorY, W, 3);
+  g.fillStyle = lg(g, 0, 0, 0, H * .08, [[0, '#2a2230'], [1, '#4a3e58']]); g.fillRect(0, 0, W, H * .07);  // stone lintel
   return cv;
+}
+function drawDrills(g, x, W, H, now, spin) {
+  const Hw = HALLOWEEN;
+  g.fillStyle = lg(g, x, 0, W, 0, [[0, '#6a7290'], [.3, '#3a3e58'], [1, '#22263a']]); g.fillRect(x, 0, W - x, H);   // the moving wall
+  g.fillStyle = '#ffc53d'; g.fillRect(x, 0, 3, H);
+  for (let i = 0; i < 4; i++) {
+    const y = H * (.2 + i * .2), L = H * .2, R = H * .075;
+    g.save(); g.beginPath(); g.moveTo(x, y - R); g.lineTo(x - L, y); g.lineTo(x, y + R); g.closePath();
+    g.fillStyle = lg(g, 0, y - R, 0, y + R, Hw ? [[0, '#e8e8f2'], [.5, '#9aa0b8'], [1, '#4a4e66']] : [[0, '#9ac8ff'], [.5, '#2a6ad8'], [1, '#0f2f7a']]); g.fill(); g.clip();
+    g.strokeStyle = 'rgba(255,255,255,.55)'; g.lineWidth = 2;   // spiral grooves turning
+    for (let k = -1; k < 6; k++) { const xx = x - ((k * L / 5 + spin * L / 5) % L) - 2; g.beginPath(); g.moveTo(xx, y - R); g.lineTo(xx - L * .14, y + R); g.stroke(); }
+    g.restore();
+    g.fillStyle = '#2a2e44'; g.fillRect(x, y - R * 1.2, 6, R * 2.4);
+  }
 }
 function renderPeril(now) {
   const cv = $('#peril'), W = cv.clientWidth, H = cv.clientHeight; if (!W || !H) return;
@@ -2150,44 +2216,28 @@ function renderPeril(now) {
   g.drawImage(PERIL.bg, 0, 0, W, H);
   const P = G.peril, T0 = G.def.rescue.time;
   let target = Math.min(1, Math.max(0, 1 - G.tLeft / T0));
-  if (P.state === 'squish') target = 1.12; else if (P.state === 'saved') target = 0;
-  P.pDisp += (target - P.pDisp) * (P.state === 'saved' ? .05 : .08);
-  const floorY = H * .84, wallX = W * .03, kingX = W * .8, kSize = H * .8, rs = H * .11, pileH = H * .62;
-  const front = W * .2 + (kingX - W * .05 - W * .2) * P.pDisp;      // the heap's leading edge creeps toward the host
-  const topAt = u => pileH * (1 - .7 * Math.pow(Math.min(1, Math.max(0, u)), 1.2));
-  const blink = now % 3400 < 120 && P.state !== 'squish';
-  const drawHost = () => {
-    const mood = P.state === 'saved' ? 'cheer' : P.state === 'squish' ? 'sad' : 'worried';
-    const img = hostImage(mood, Math.round(kSize * DPR), blink);
-    let x = kingX, y = floorY;
-    if (P.state === 'danger' && P.pDisp > .55) x += Math.sin(now / 22) * 2.2 * (P.pDisp - .55) / .45;   // trembling
-    if (P.state === 'saved') y -= Math.abs(Math.sin(now / 140)) * kSize * .08;
-    g.save(); g.translate(x, y);
-    if (P.state === 'squish') { const q = Math.min(1, (now - P.t0) / 220); g.scale(1 + .45 * q, 1 - .7 * q); }  // comically flattened
-    g.drawImage(img, -kSize / 2, -kSize, kSize, kSize); g.restore();
-  };
-  if (P.state === 'squish') drawHost();
-  if (P.state === 'danger' && Math.random() < .55) P.falling.push({ x: W * .1 + (Math.random() - .5) * W * .06, y: H * .08, vy: 1 + Math.random(), k: Math.random() < .2 ? 2 : Math.random() < .5 ? 0 : 1, drop: false });
-  if (P.state === 'saved' && Math.random() < .7) P.drops++;
-  while (P.drops > 0) { P.drops--; P.falling.push({ x: wallX + Math.random() * Math.max(10, front - wallX) * .9, y: floorY - Math.random() * pileH * .5, vy: .5, k: Math.random() < .08 ? 3 : Math.random() < .5 ? 0 : 1, drop: true }); }
-  for (const r of P.rocks) drawRock(g, r.k, wallX + r.u * (front - wallX), floorY - r.v * topAt(r.u) - rs * .3, rs * r.s);
-  for (let i = P.falling.length - 1; i >= 0; i--) {
-    const f = P.falling[i]; f.vy += .3; f.y += f.vy;
-    const limit = f.drop ? H + rs : floorY - topAt((f.x - wallX) / Math.max(1, front - wallX)) - rs * .2;
-    if (f.y > limit) { P.falling.splice(i, 1); continue; }
-    drawRock(g, f.k, f.x, f.y, rs * .9);
-  }
-  if (P.state !== 'squish') drawHost();
-  if (P.state === 'squish') for (let i = 0; i < 3; i++) { const a = now / 200 + i * 2.1; twinkle(g, kingX + Math.cos(a) * kSize * .32, floorY - kSize * .42 + Math.sin(a) * kSize * .08, kSize * .07); }
+  if (P.state === 'squish') target = 1.05; else if (P.state === 'saved') target = -.15;
+  P.pDisp += (target - P.pDisp) * (P.state === 'danger' ? .08 : .12);
+  const floorY = H * .86, kingX = W * .3, kSize = H * .8;
+  const wallX = W * .97 - (W * .97 - (kingX + kSize * .28 + H * .2)) * P.pDisp;   // the drills creep in as the clock runs down
+  const mood = P.state === 'saved' ? 'cheer' : P.state === 'squish' ? 'sad' : 'worried', blink = now % 3400 < 120 && P.state !== 'squish';
+  const img = hostImage(mood, Math.round(kSize * DPR), blink);
+  let x = kingX, y = floorY;
+  if (P.state === 'danger' && P.pDisp > .55) x += Math.sin(now / 22) * 2.2 * (P.pDisp - .55) / .45;   // trembling
+  if (P.state === 'saved') y -= Math.abs(Math.sin(now / 140)) * kSize * .08;
+  g.save(); g.translate(x, y);
+  if (P.state === 'squish') { const q = Math.min(1, (now - P.t0) / 220); g.translate(-kSize * .18 * q, 0); g.scale(1 - .62 * q, 1 + .06 * q); } // pressed flat against the door
+  g.drawImage(img, -kSize / 2, -kSize, kSize, kSize); g.restore();
+  drawDrills(g, wallX, W, H, now, P.state === 'danger' ? now / 90 : P.state === 'squish' ? now / 40 : 0);
+  if (P.state === 'squish') for (let i = 0; i < 3; i++) { const a = now / 200 + i * 2.1; twinkle(g, kingX - kSize * .18 + Math.cos(a) * kSize * .25, floorY - kSize * .95 + Math.sin(a) * kSize * .07, kSize * .07); }
   if (P.state === 'danger' && P.pDisp > .6) { // a panicked shout for help
-    const s = 1 + Math.sin(now / 110) * .07, bx = kingX - kSize * .55, by = floorY - kSize * .95;
-    g.save(); g.translate(bx, by); g.scale(s, s);
-    g.fillStyle = '#fff'; rr(g, -26, -12, 52, 22, 9); g.fill(); poly(g, [[8, 9], [18, 9], [20, 16]]); g.fill();
+    const sc = 1 + Math.sin(now / 110) * .07;
+    g.save(); g.translate(kingX + kSize * .5, floorY - kSize * .95); g.scale(sc, sc);
+    g.fillStyle = '#fff'; rr(g, -26, -12, 52, 22, 9); g.fill(); poly(g, [[-14, 9], [-6, 9], [-20, 17]]); g.fill();
     g.fillStyle = '#e8102c'; g.font = `16px 'Lilita One', 'Arial Rounded MT Bold', sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('HELP!', 0, 0);
     g.restore();
   }
 }
-
 /* =========================================================
    The King: drawn character who reacts and gives tips
    ========================================================= */
@@ -2385,8 +2435,9 @@ function kingTipFor(sp) {
 function layout() {
   if (!G) return;
   const wrap = $('#boardWrap'), W = wrap.clientWidth, H = wrap.clientHeight, pad = 13;
-  const cs = Math.max(20, Math.floor(Math.min((W - pad * 2) / G.cols, (H - pad * 2) / G.rows, 70)));
-  G.cs = cs; G.ox = pad; G.oy = pad; G.W = cs * G.cols + pad * 2; G.H = cs * G.rows + pad * 2;
+  const top = G.def.rescue ? G.def.rescue.h + .2 : 0; // rescue boards carry the rubble shaft above the grid
+  const cs = Math.max(20, Math.floor(Math.min((W - pad * 2) / G.cols, (H - pad * 2) / (G.rows + top), 70)));
+  G.cs = cs; G.ox = pad; G.oy = pad + top * cs; G.W = cs * G.cols + pad * 2; G.H = cs * (G.rows + top) + pad * 2;
   board.width = Math.round(G.W * DPR); board.height = Math.round(G.H * DPR);
   board.style.width = G.W + 'px'; board.style.height = G.H + 'px';
   const ss = Math.round(cs * DPR);
@@ -2411,6 +2462,13 @@ function buildBoardBg() {
     }
   };
   g.save(); g.shadowColor = 'rgba(0,0,0,.55)'; g.shadowBlur = 16; g.shadowOffsetY = 7; each(10, 16, '#6a3f0c'); g.restore();
+  if (G.def.rescue) { // the shaft the rubble hangs in
+    const R = G.def.rescue, x = G.ox + R.x0 * cs, w = R.w * cs;
+    g.save(); g.beginPath(); g.rect(x - 4, 0, w + 8, G.oy); g.clip();
+    bricks(g, x - 4, 0, x + w + 8, G.oy, 24, 11, SP(28, 272), SP(14, 22), SP(22, 10), 4);
+    g.fillStyle = 'rgba(0,0,0,.35)'; g.fillRect(x - 4, 0, w + 8, G.oy); g.restore();
+    for (const sx of [x - 6, x + w]) { g.fillStyle = lg(g, sx, 0, sx + 6, 0, [[0, '#3a3048'], [.5, '#6a5e7e'], [1, '#2a2236']]); g.fillRect(sx, 0, 6, G.oy); }
+  }
   each(10, 16, lg(g, 0, 0, 0, G.H, SP([[0, '#ffe591'], [.45, '#eaa82a'], [1, '#a2600b']], [[0, '#ffb35c'], [.45, '#e0640f'], [1, '#6a2200']])));
   each(6.5, 12, SP('#8a5410', '#3a1200'));
   each(4.5, 10, SP('#9fb1ea', '#3b2d5e'));
@@ -2420,6 +2478,8 @@ function buildBoardBg() {
 function sizeFx() { fx.width = Math.round(innerWidth * DPR); fx.height = Math.round(innerHeight * DPR); }
 window.addEventListener('resize', () => { layout(); sizeFx(); if (!$('#castle').hidden) drawScene(); buildMap(); });
 
+// Rubble that pours out of the bottom of the board keeps falling down the screen.
+const SPILL = [];
 function drawTile(g, t, now, extraScale = 1, ox = 0, oy = 0, rot = 0) {
   const size = G.cs * .98 * t.s * extraScale; if (size <= .5 || t.a <= 0) return;
   const sq = Math.max(-.35, Math.min(.35, t.sq + (t.falling ? -.13 * JUICE : 0)));
@@ -2429,7 +2489,7 @@ function drawTile(g, t, now, extraScale = 1, ox = 0, oy = 0, rot = 0) {
   g.globalAlpha = Math.max(0, Math.min(1, t.a));
   if (t.sp === 'prop' || t.sp === 'ball') { g.scale(w, h); live(t.sp)(g, now); }
   else {
-    const spr = sprite(t.rock ? 'rubble1' : t.sp || 'k' + t.k);
+    const spr = sprite(t.sp || 'k' + t.k);
     g.drawImage(spr, -w / 2, -h / 2, w, h);
     if (t.flash > .02) { g.globalCompositeOperation = 'lighter'; g.globalAlpha *= Math.min(1, t.flash); g.drawImage(spr, -w / 2, -h / 2, w, h); }
   }
@@ -2488,13 +2548,7 @@ function renderBoard(now, dt) {
   }
   for (const t of G.dying) { springTile(t, dts); drawTile(g, t, now); }
   idleTwinkle(now);
-  if (G.def.rescue) for (let c = 0; c < G.cols; c++) {
-    if (!G.grid.some(row => row[c].tile && row[c].tile.rock)) continue;
-    const r = bottomOf(c); if (r < 0) continue;
-    const x = px(c), y = G.oy + (r + 1) * cs - cs * .1 + Math.sin(now / 200) * cs * .04;
-    g.save(); g.globalAlpha = .75 + Math.sin(now / 200) * .25; g.fillStyle = HALLOWEEN ? '#9be04a' : '#ffd84d'; g.strokeStyle = 'rgba(40,20,0,.6)'; g.lineWidth = 2;
-    poly(g, [[x - cs * .22, y - cs * .12], [x + cs * .22, y - cs * .12], [x, y + cs * .1]]); g.fill(); g.stroke(); g.restore();
-  }
+  if (G.rubble) drawRubbleSim(g);
   for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) if (G.grid[r][c].ice) { const s = cs * .98; g.drawImage(sprite('ice'), px(c) - s / 2, py(r) - s / 2, s, s); }
   for (const d of G.dyingIce) { const s = cs * .98 * d.s; g.globalAlpha = Math.max(0, d.a); g.drawImage(sprite('ice'), px(d.c) - s / 2, py(d.r) - s / 2, s, s); g.globalAlpha = 1; }
   for (let i = G.parts.length - 1; i >= 0; i--) {
@@ -2524,6 +2578,11 @@ function renderFx(now) {
     const b = confettiBits[i]; b.vy = Math.min(b.vy + .05, 5); b.x += b.vx + Math.sin(b.y / 40) * .8; b.y += b.vy; b.rot += b.vr; b.flip += .12;
     if (b.y > innerHeight + 30) { confettiBits.splice(i, 1); continue; }
     g.save(); g.translate(b.x, b.y); g.rotate(b.rot); g.scale(1, Math.cos(b.flip)); g.fillStyle = b.c; g.fillRect(-b.w / 2, -b.h / 2, b.w, b.h); g.restore();
+  }
+  for (let i = SPILL.length - 1; i >= 0; i--) {
+    const q = SPILL[i]; q.vy += .45; q.x += q.vx; q.y += q.vy;
+    if (q.y > innerHeight + 40) { SPILL.splice(i, 1); continue; }
+    drawRock(g, q.k, q.x, q.y, q.s);
   }
   if (!flyers.length) return;
   const ss = spriteSize || 64;
@@ -2648,15 +2707,15 @@ function goalIconsHtml(goals) { return `<div class="goalrow">${goals.map((g, i) 
 function fillGoalIcons(card, goals) { goals.forEach((g, i) => drawIcon(card.querySelector(`[data-mi="${i}"] canvas`), g.key)); }
 function levelGoals(n) {
   const def = getLevel(n); const out = def.g.map(([c, k]) => ({ key: 'k' + c, n: k }));
-  let cr = 0, st = 0, ic = 0, ru = 0; for (const row of def.L) for (const ch of row) { if (ch === 'C' || ch === 'D') cr++; if (ch === 'S') st++; if (ch === 'I') ic++; if (ch === 'R') ru++; }
-  if (cr) out.push({ key: 'crate1', n: cr }); if (st) out.push({ key: 'stone2', n: st }); if (ic) out.push({ key: 'iceGoal', n: ic }); if (ru) out.push({ key: 'rubble1', n: ru });
+  let cr = 0, st = 0, ic = 0; for (const row of def.L) for (const ch of row) { if (ch === 'C' || ch === 'D') cr++; if (ch === 'S') st++; if (ch === 'I') ic++; }
+  if (cr) out.push({ key: 'crate1', n: cr }); if (st) out.push({ key: 'stone2', n: st }); if (ic) out.push({ key: 'iceGoal', n: ic }); if (def.rescue) out.push({ key: 'rubble1', n: '90%' }); // pour out 90% of the rubble
   return { def, goals: out };
 }
 function openLevel(n) {
   ac();
   const { def, goals } = levelGoals(n);
   const card = modal(`<h3>Level ${n}</h3>${def.hard ? '<span class="hard-tag">Hard level</span>' : ''}${def.rescue ? '<span class="hard-tag rescue-tag">Rescue!</span>' : ''}<p>${def.rescue
-    ? `${SP('The King', 'The Count')} is trapped and the rubble is closing in! Clear the pieces under the boulders so they fall off the bottom of the board. Every boulder that drops buys ${def.rescue.relief} more seconds.`
+    ? `The ${SP('drills', 'spikes')} are closing in on ${SP('the King', 'the Count')}! The board won\u2019t refill: clear a path to the bottom so the rubble pours out. You have ${clock(def.rescue.time)}.`
     : `Clear these before your ${def.m} moves run out.${def.hard ? ' Win for double coins!' : ''}`}</p>${goalIconsHtml(goals)}<div class="row"><button class="btn ghost" data-a="close">Not now</button><button class="btn green" data-a="play">Play</button></div>`);
   fillGoalIcons(card, goals);
   card.querySelector('[data-a=close]').onclick = closeModal;
