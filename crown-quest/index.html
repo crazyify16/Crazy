@@ -2088,12 +2088,26 @@ function feedRubble(dtMs) {
     for (let x = x0 + r + Math.random() * r * .9; x < x0 + w - r * .9; x += r * 1.95) { const q = newPebble(x, y); q.py = y - .05; RB.p.push(q); }
   }
 }
-function solidCell(c, r) {
-  if (c < 0 || c >= G.cols) return true;
-  if (r < 0 || r >= G.rows) return false;   // the air above, and the open bottom edge
-  const cell = G.grid[r][c]; return cell.hole || !!cell.b || !!cell.tile;
+// Solids are boxes where things really are on screen: holes and obstacles in their cells, and every piece at
+// its animated position. A piece falling into a gap then pushes the rubble along smoothly instead of the
+// rubble being shoved out of a cell the piece hasn't reached yet.
+function buildSolids() {
+  // each box is filed once, under the cell holding its top-left corner (rows shifted by one for pieces above the board)
+  const cols = G.cols, rows = G.rows, buckets = Array.from({ length: cols * (rows + 1) }, () => []);
+  const at = (r, c) => { const cell = r >= 0 && r < rows && c >= 0 && c < cols && G.grid[r][c]; return !!cell && (cell.hole || !!cell.b || (!!cell.tile && Math.abs(cell.tile.x - c) + Math.abs(cell.tile.y - r) < .01)); };
+  // faces: bit 1 up, 2 down, 4 left, 8 right are open (no settled solid next to them): a stone is never pushed
+  // out of one box into its neighbour, so it can't squeeze down the seam between two pieces
+  const add = (x, y, faces) => { const c = Math.floor(x), r = Math.floor(y) + 1; if (c >= 0 && c < cols && r >= 0 && r <= rows) buckets[r * cols + c].push(x, y, faces); };
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const cell = G.grid[r][c], t = cell.tile;
+    if (!(cell.hole || cell.b || t)) continue;
+    const x = cell.hole || cell.b ? c : t.x, y = cell.hole || cell.b ? r : Math.max(-1, t.y);
+    const settled = Math.abs(x - c) + Math.abs(y - r) < .01;
+    add(x, y, settled ? (at(r - 1, c) ? 0 : 1) | (at(r + 1, c) ? 0 : 2) | (c > 0 && at(r, c - 1) ? 0 : 4) | (c < cols - 1 && at(r, c + 1) ? 0 : 8) : 15);
+  }
+  return buckets;
 }
-function collideSolids(q, R) {
+function collideSolids(q, R, B) {
   const r = PEB_R;
   if (q.y < 0) { // inside a shaft: its walls hold the rubble in
     let best = null, bd = 1e9;
@@ -2101,30 +2115,42 @@ function collideSolids(q, R) {
     if (q.x < best[0] + r) q.x = best[0] + r; if (q.x > best[0] + best[1] - r) q.x = best[0] + best[1] - r;
   }
   if (q.x < r) q.x = r; if (q.x > G.cols - r) q.x = G.cols - r;
-  for (let c = Math.floor(q.x - r); c <= Math.floor(q.x + r); c++) for (let rr = Math.floor(q.y - r); rr <= Math.floor(q.y + r); rr++) {
-    if (!solidCell(c, rr)) continue;
-    const nx = Math.max(c, Math.min(q.x, c + 1)), ny = Math.max(rr, Math.min(q.y, rr + 1));
-    const dx = q.x - nx, dy = q.y - ny, dd = dx * dx + dy * dy;
-    if (dd > r * r) continue;
-    if (dd < 1e-9) { // a piece fell onto this pebble: pop it out of the nearest face, preferring up
-      const up = q.y - rr, dn = (rr + 1 - q.y) * 1.6, lf = q.x - c, rt = c + 1 - q.x, m = Math.min(up, dn, lf, rt);
-      if (m === up) q.y = rr - r; else if (m === lf) q.x = c - r; else if (m === rt) q.x = c + 1 + r; else q.y = rr + 1 + r;
-      q.px = q.x; q.py = q.y; continue;
+  if (q.y < -r - 1 || q.y > G.rows + r) return;
+  for (let c = Math.floor(q.x - r) - 1; c <= Math.floor(q.x + r); c++) for (let rr = Math.floor(q.y - r) - 1; rr <= Math.floor(q.y + r); rr++) {
+    if (c < 0 || c >= G.cols || rr < -1 || rr >= G.rows) continue;
+    const b = B[(rr + 1) * G.cols + c];
+    for (let i = 0; i < b.length; i += 3) {
+      const bx = b[i], by = b[i + 1], f = b[i + 2];
+      const nx = Math.max(bx, Math.min(q.x, bx + 1)), ny = Math.max(by, Math.min(q.y, by + 1));
+      const dx = q.x - nx, dy = q.y - ny, dd = dx * dx + dy * dy;
+      if (dd > r * r) continue;
+      if (dd < 1e-9) { // centre inside the box: out through the nearest open face
+        const up = f & 1 || !f ? q.y - by : 9, dn = f & 2 ? by + 1 - q.y : 9, lf = f & 4 ? q.x - bx : 9, rt = f & 8 ? bx + 1 - q.x : 9, m = Math.min(up, dn, lf, rt);
+        if (m === dn) q.y = by + 1 + r; else if (m === up) q.y = by - r; else if (m === lf) q.x = bx - r; else q.x = bx + 1 + r;
+        continue;
+      }
+      const dist = Math.sqrt(dd), k = (r - dist) / dist; q.x += dx * k; q.y += dy * k;
     }
-    const dist = Math.sqrt(dd), k = (r - dist) / dist; q.x += dx * k; q.y += dy * k;
   }
 }
 function stepRubble(dtMs) {
   const RB = G.rubble, R = G.def.rescue, r = PEB_R, d = 2 * r, d2 = d * d, acc = 28;
   feedRubble(dtMs);
-  // substeps follow the frame time, so the rubble moves at the same speed on slow phones
-  const dt = Math.min(dtMs, 50) / 1000, sub = Math.max(2, Math.ceil(dt / .0085)), h = dt / sub, damp = Math.pow(.985, 120 * h);
+  // fixed 120Hz steps: Verlet stays smooth however unevenly the frames arrive
+  const h = 1 / 120, damp = .985, vmax = .16;   // vmax: at most ~19 cells/s, so nothing ever gets launched
+  RB.acc = Math.min((RB.acc || 0) + dtMs / 1000, h * 8);
+  const B = buildSolids();
   const top = R.h + 2, GW = Math.ceil(G.cols / d) + 3, GH = Math.ceil((G.rows + top + 1) / d) + 3;
-  for (let s = 0; s < sub; s++) {
-    for (const q of RB.p) { const vx = (q.x - q.px) * damp, vy = (q.y - q.py) * damp; q.px = q.x; q.py = q.y; q.x += vx; q.y += vy + acc * h * h; }
+  while (RB.acc >= h) {
+    RB.acc -= h;
+    for (const q of RB.p) {
+      let vx = (q.x - q.px) * damp, vy = (q.y - q.py) * damp; const v = Math.hypot(vx, vy);
+      if (v > vmax) { vx *= vmax / v; vy *= vmax / v; }
+      q.px = q.x; q.py = q.y; q.x += vx; q.y += vy + acc * h * h;
+    }
     const n = RB.p.length, head = new Int32Array(GW * GH).fill(-1), next = new Int32Array(n), cellOf = new Int32Array(n);
     for (let i = 0; i < n; i++) { const q = RB.p[i], k = Math.max(0, Math.min(GH - 1, Math.floor((q.y + top) / d) + 1)) * GW + Math.max(0, Math.min(GW - 1, Math.floor(q.x / d) + 1)); cellOf[i] = k; next[i] = head[k]; head[k] = i; }
-    for (let it = 0; it < 3; it++) {
+    for (let it = 0; it < 4; it++) {
       for (let i = 0; i < n; i++) {
         const q = RB.p[i], k0 = cellOf[i];
         for (let oy = -GW; oy <= GW; oy += GW) for (let ox = -1; ox <= 1; ox++) {
@@ -2133,12 +2159,12 @@ function stepRubble(dtMs) {
             if (j <= i) continue;
             const o = RB.p[j]; let dx = o.x - q.x, dy = o.y - q.y; const dd = dx * dx + dy * dy;
             if (dd >= d2 || dd < 1e-12) continue;
-            const dist = Math.sqrt(dd), push = (d - dist) / dist * .5; dx *= push; dy *= push;
+            const dist = Math.sqrt(dd), push = Math.min(.06, (d - dist) * .5) / dist; dx *= push; dy *= push; // gentle: a squeezed pile eases apart
             q.x -= dx; q.y -= dy; o.x += dx; o.y += dy;
           }
         }
       }
-      for (const q of RB.p) collideSolids(q, R);
+      for (const q of RB.p) collideSolids(q, R, B);
     }
   }
   let out = 0;
