@@ -44,3 +44,7 @@ node crown-quest/tools/calibrate.cjs crown-quest/index.html 40 150 5,13,22   # j
 
 Current targets: tutorial levels are near-certain wins, normal levels ease from ~88% to ~75% bot win
 rate, and Hard levels sit around 50–75%. Re-run it after changing any level layout or goal.
+
+## Art
+
+- `art/count-poses.webp` is the source illustration for Count Dracula's five poses (beckoning, laughing, shocked, sad, gleeful). The game embeds cut-out copies of them (`COUNT_POSES` in `index.html`) with the purple backdrop removed.
