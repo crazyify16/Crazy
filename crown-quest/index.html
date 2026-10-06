@@ -576,25 +576,32 @@ const MOVES = [
 ];
 const isHard = n => n >= 10 && n % 5 === 0;
 // Rescue levels: rubble pours toward the King; break every rubble block on the board before time runs out.
-const RESCUE_LEVELS = [5, 13, 22, 31, 41, 48, 56];
-// Seconds before the drills reach the host. Rescue boards don't refill, so these can't be measured by the
-// move-count bot (the rubble needs real-time physics). A real-time bot with 0.9s of thinking per move wins them
-// in 7-25s; these give a person roughly twice what they need at about 3s a move.
-const RESCUE_TIME = [40, 45, 50, 55, 70, 65, 65];
+const RESCUE_LEVELS = [5, 12, 17, 22, 26, 31, 34, 38, 41, 44, 48, 53, 56, 59];
+// A rescue board has no refill. Rubble pours endlessly from one or two shafts above it ('R' cells start full
+// of rubble too): clear pieces to open paths to the bottom, and drain enough of it before the drills arrive.
+// s: shafts [first column, width], h: shaft height (cells), need: rubble to drain, t: seconds on the clock.
+// Layout legend as usual, plus R (starts full of rubble). Timers were checked with a real-time bot that
+// thinks 2.5s per move: it needs about 70% of the clock, so a person has to keep moving.
+const RESCUE = [
+  { s: [[0, 3]], h: 2.5, need: 140, t: 40, L: ['RRR.....', '........', '........', '........', '........', '........', '........', '........'] },
+  { s: [[5, 3]], h: 2.5, need: 170, t: 40, L: ['.....RRR', '........', '........', '.....CC.', '........', '........', '........', '........'] },
+  { s: [[0, 4]], h: 3, need: 200, t: 40, L: ['RRRR....', 'RRR.....', '........', '.CC.....', '........', '........', '#......#', '##....##'] },
+  { s: [[2, 4]], h: 3, need: 220, t: 40, L: ['..RRRR..', '........', '..SSSS..', '........', '........', '........', '........', '#......#'] },
+  { s: [[0, 3], [5, 3]], h: 2.5, need: 240, t: 45, L: ['RRR..RRR', '........', '........', '.D....D.', '........', '........', '........', '........'] },
+  { s: [[4, 4]], h: 3, need: 260, t: 45, L: ['....RRRR', '.....RRR', '........', '....IIII', '........', '.CC..CC.', '........', '#......#'] },
+  { s: [[0, 3]], h: 3, need: 280, t: 50, L: ['RRR.....', '........', '##......', '........', '........', '...SS...', '........', '........'] },
+  { s: [[0, 3], [5, 3]], h: 3, need: 300, t: 50, L: ['RRR..RRR', '........', '...SS...', '........', '.CC..CC.', '........', '........', '##....##'] },
+  { s: [[2, 4]], h: 3.4, need: 320, t: 50, L: ['..RRRR..', '..RRRR..', '........', '.DDDDDD.', '........', '........', '#......#', '##....##'] },
+  { s: [[5, 3]], h: 3.4, need: 340, t: 50, L: ['.....RRR', '......RR', '........', '.....SS.', '....IIII', '........', '..CC....', '#......#'] },
+  { s: [[0, 3], [5, 3]], h: 3, need: 360, t: 45, L: ['RRR..RRR', '........', 'SSS..SSS', '........', '........', '...DD...', '........', '#......#'] },
+  { s: [[0, 4]], h: 3.4, need: 380, t: 60, L: ['RRRR....', 'RRRR....', '........', 'DDDD....', '....#...', '....##..', '........', '##......'] },
+  { s: [[2, 4]], h: 3.4, need: 400, t: 50, L: ['..RRRR..', '..RRRR..', '..SSSS..', '........', '.IIIIII.', '........', '.C.CC.C.', '#......#'] },
+  { s: [[0, 3], [5, 3]], h: 3.4, need: 440, t: 75, L: ['RRR..RRR', 'RR....RR', 'DDD..DDD', '........', '..SSSS..', '........', 'I.IIII.I', '#......#'] },
+];
 const isRescue = n => RESCUE_LEVELS.includes(n);
-// A rescue board has no refill. Above it hangs a shaft full of loose pebble rubble ('R' cells start full of
-// pebbles too). Clear pieces so the rubble can pour down through the holes and out of the bottom of the board.
 function genRescue(n) {
-  const idx = RESCUE_LEVELS.indexOf(n), rows = 7, cols = 8;
-  const L = Array.from({ length: rows }, () => Array(cols).fill('.'));
-  const right = idx % 2 === 1, w = idx >= 4 ? 4 : 3, x0 = right ? cols - w : 0, h = idx >= 5 ? 3.4 : idx >= 2 ? 3 : 2.5;
-  const col = c => right ? cols - 1 - c : c;
-  for (let c = 0; c < w; c++) L[0][col(c)] = 'R';
-  if (idx >= 2) for (let c = 0; c < w - 1; c++) L[1][col(c)] = 'R';
-  if (idx === 2 || idx === 3 || idx === 5) for (const c of [1, 2]) L[4][col(c)] = 'C';      // crates in the way
-  if (idx === 4 || idx === 6) for (const c of [1, 2]) L[3][col(c)] = 'S';                   // stones in the way
-  if (idx === 6) for (const c of [0, 3]) L[5][col(c)] = 'C';
-  return { m: 9999, k: n < 13 ? 4 : 5, g: [], L: L.map(r => r.join('')), rescue: { time: RESCUE_TIME[idx] || 100, x0, w, h } };
+  const R = RESCUE[RESCUE_LEVELS.indexOf(n)];
+  return { m: 9999, k: n < 20 ? 4 : 5, g: [], L: R.L, rescue: { time: R.t, shafts: R.s, h: R.h, need: R.need } };
 }
 function getLevel(n) {
   if (isRescue(n)) return { ...genRescue(n), hard: false }; const def = n <= HAND.length ? HAND[n - 1] : genLevel(n); return { ...def, m: MOVES[n - 1] || def.m, hard: isHard(n) }; }
@@ -810,11 +817,11 @@ const DRAW = {
     g.beginPath(); g.moveTo(.1, .4); g.lineTo(.16, .18); g.lineTo(.36, .1); g.moveTo(.16, .18); g.lineTo(.06, .06); g.stroke();
     twinkle(g, -.28, -.28, .07);
   },
-  rubble1(g) { // a little heap of pebbles, teal crystals and gold nuggets
+  rubble1(g) { // a little heap of rubble stones
     const R = rng(5), rocks = [];
-    for (let i = 0; i < 14; i++) { const a = R() * 7, d = Math.sqrt(R()) * .32; rocks.push([Math.cos(a) * d, Math.sin(a) * d * .8 + .05, .1 + R() * .05, R()]); }
+    for (let i = 0; i < 13; i++) { const a = R() * 7, d = Math.sqrt(R()) * .3; rocks.push([Math.cos(a) * d, Math.sin(a) * d * .7 + .08, .26 + R() * .1, Math.floor(R() * STONE_KINDS)]); }
     rocks.sort((a, b) => a[1] - b[1]);
-    for (const [x, y, r, v] of rocks) toy(g, g => { g.beginPath(); g.ellipse(x, y, r, r * .85, v * 3, 0, 7); }, v < .1 ? PAL.gold : v < .28 ? { light: '#b8f0e0', base: '#4fb8a0', dark: '#1f6a5a', line: '#0a3028' } : PAL.rock, null, { x: x - r * .3, y: y - r * .4, r: r * .45 });
+    for (const [x, y, s, k] of rocks) { g.save(); g.translate(x, y); g.scale(s, s); stoneArt(g, k); g.restore(); }
   },
   iceGoal(g) { g.save(); g.scale(.85, .85); art('k3')(g); g.restore(); art('ice')(g); },
   star(g) {
@@ -1204,9 +1211,11 @@ function startLevel(n) {
     }
   }
   const goals = def.g.map(([c, n]) => ({ type: 'color', c, left: n, shown: n }));
-  if (crates) goals.push({ type: 'crate', left: crates, shown: crates });
-  if (stones) goals.push({ type: 'stone', left: stones, shown: stones });
-  if (ices) goals.push({ type: 'ice', left: ices, shown: ices });
+  if (!def.rescue) { // on rescue boards obstacles just stand in the rubble's way (the board can't refill to clear them all)
+    if (crates) goals.push({ type: 'crate', left: crates, shown: crates });
+    if (stones) goals.push({ type: 'stone', left: stones, shown: stones });
+    if (ices) goals.push({ type: 'ice', left: ices, shown: ices });
+  }
   if (def.rescue) goals.push({ type: 'rubble', left: 0, shown: 0 }); // set once the rubble is poured in
   G = { n, def, rows, cols, grid, goals, moves: def.m, busy: false, over: false, sel: null, booster: null,
     dying: [], dyingB: [], dyingIce: [], fx: [], parts: [], pending: new Set(), claimed: new Set(), chain: 0, shake: 0, hint: null, cs: 40, ox: 6, oy: 6 };
@@ -1727,7 +1736,7 @@ async function winFlow() {
   G.over = true; kingSay(SP('Hooray! You did it, hero!', 'Bwah-ha-ha! Spooktacular, my friend!'), 'cheer', 1e9, 3);
   const rescue = G.def.rescue, left = rescue ? 0 : G.moves, m = G.def.m, T0 = rescue ? rescue.time : 1;
   const stars = rescue ? (G.tLeft >= T0 * .45 ? 3 : G.tLeft >= T0 * .2 ? 2 : 1) : left >= Math.ceil(m * .28) ? 3 : left >= Math.ceil(m * .1) ? 2 : 1;
-  if (rescue) { G.peril.state = 'saved'; G.peril.t0 = performance.now(); G.rubble.flush = true; } // the rest of the heap pours away
+  if (rescue) { G.peril.state = 'saved'; G.peril.t0 = performance.now(); G.rubble.flush = true; } // the shafts stop pouring
   await delay(250); sfx.win(); banner(rescue ? SP('King saved!', 'Count saved!') : SP('Level Complete!', 'Spooktacular!')); confetti(REDUCED ? 40 : 140); await delay(1100);
   if (left > 0) {
     banner(SP("King's Bonus!", "Count's Bonus!")); await delay(500);
@@ -2053,29 +2062,44 @@ function banner(text) {
 // Every pebble is a particle: gravity, pebble-on-pebble collisions, and collisions with pieces, obstacles
 // and walls. Empty cells are open, and so is the bottom edge of the board, where pebbles pour out.
 const PEB_R = .17; // pebble radius, in cells
+const STONE_KINDS = 12;
+function newPebble(x, y) { return { x, y, px: x, py: y, k: Math.floor(Math.random() * STONE_KINDS), s: .82 + Math.random() * .42 }; }
 function makeRubble() {
   const R = G.def.rescue, list = [], r = PEB_R;
   const fill = (x0, y0, x1, y1) => {
     for (let y = y1 - r, row = 0; y > y0 + r * .4; y -= r * 1.72, row++)
-      for (let x = x0 + r + (row % 2) * r * .9; x < x1 - r * .9; x += r * 1.95) {
-        const v = Math.random(), px0 = x + (Math.random() - .5) * .03;
-        list.push({ x: px0, y, px: px0, py: y, k: v < .1 ? 3 : v < .3 ? 2 : v < .66 ? 0 : 1, s: .85 + Math.random() * .4 });
-      }
+      for (let x = x0 + r + (row % 2) * r * .9; x < x1 - r * .9; x += r * 1.95) list.push(newPebble(x + (Math.random() - .5) * .03, y));
   };
-  fill(R.x0, -R.h, R.x0 + R.w, 0);
+  for (const [x0, w] of R.shafts) fill(x0, -R.h, x0 + w, 0);
   for (let rr = 0; rr < G.rows; rr++) for (let c = 0; c < G.cols; c++) if (G.def.L[rr][c] === 'R') fill(c, rr, c + 1, rr + 1);
-  const need = Math.ceil(list.length * .9);   // pour out 90% to save him (a few pebbles always get stuck on ledges)
-  const goal = G.goals.find(g => g.type === 'rubble'); goal.left = goal.shown = need;
-  return { p: list, total: list.length, need, drained: 0, flush: false };
+  const goal = G.goals.find(g => g.type === 'rubble'); goal.left = goal.shown = R.need;
+  return { p: list, need: R.need, drained: 0, flush: false, feedT: 0 };
+}
+// The shafts never run dry: whenever a shaft has room at the top, a new row of rubble tumbles in.
+function feedRubble(dtMs) {
+  const RB = G.rubble, R = G.def.rescue, r = PEB_R;
+  if (RB.flush || (RB.feedT -= dtMs) > 0) return;
+  RB.feedT = 110;
+  for (const [x0, w] of R.shafts) {
+    const y = -R.h - r * 1.2;
+    let blocked = false;
+    for (const q of RB.p) if (q.y < y + r * 2.2 && q.x > x0 && q.x < x0 + w) { blocked = true; break; }
+    if (blocked) continue;
+    for (let x = x0 + r + Math.random() * r * .9; x < x0 + w - r * .9; x += r * 1.95) { const q = newPebble(x, y); q.py = y - .05; RB.p.push(q); }
+  }
 }
 function solidCell(c, r) {
   if (c < 0 || c >= G.cols) return true;
-  if (r < 0 || r >= G.rows || G.rubble.flush) return false;   // the air above, and the open bottom edge
+  if (r < 0 || r >= G.rows) return false;   // the air above, and the open bottom edge
   const cell = G.grid[r][c]; return cell.hole || !!cell.b || !!cell.tile;
 }
 function collideSolids(q, R) {
   const r = PEB_R;
-  if (q.y < 0) { if (q.x < R.x0 + r) q.x = R.x0 + r; if (q.x > R.x0 + R.w - r) q.x = R.x0 + R.w - r; } // shaft walls
+  if (q.y < 0) { // inside a shaft: its walls hold the rubble in
+    let best = null, bd = 1e9;
+    for (const sh of R.shafts) { const dd = q.x < sh[0] ? sh[0] - q.x : q.x > sh[0] + sh[1] ? q.x - sh[0] - sh[1] : 0; if (dd < bd) { bd = dd; best = sh; } }
+    if (q.x < best[0] + r) q.x = best[0] + r; if (q.x > best[0] + best[1] - r) q.x = best[0] + best[1] - r;
+  }
   if (q.x < r) q.x = r; if (q.x > G.cols - r) q.x = G.cols - r;
   for (let c = Math.floor(q.x - r); c <= Math.floor(q.x + r); c++) for (let rr = Math.floor(q.y - r); rr <= Math.floor(q.y + r); rr++) {
     if (!solidCell(c, rr)) continue;
@@ -2091,18 +2115,17 @@ function collideSolids(q, R) {
   }
 }
 function stepRubble(dtMs) {
-  // Fast, snappy sand: strong gravity, little drag. Substeps scale with the frame time so the rubble pours
-  // at full speed on slow phones too (each substep is at most ~8ms).
-  const RB = G.rubble, R = G.def.rescue, r = PEB_R, d = 2 * r, d2 = d * d, acc = 75;
-  const dt = Math.min(dtMs, 60) / 1000, sub = Math.max(2, Math.ceil(dt / .0085)), h = dt / sub;
-  const GW = Math.ceil(G.cols / d) + 2, GH = Math.ceil((G.rows + R.h + 2) / d) + 2, top = R.h + 1;
+  const RB = G.rubble, R = G.def.rescue, r = PEB_R, d = 2 * r, d2 = d * d, acc = 28;
+  feedRubble(dtMs);
+  // substeps follow the frame time, so the rubble moves at the same speed on slow phones
+  const dt = Math.min(dtMs, 50) / 1000, sub = Math.max(2, Math.ceil(dt / .0085)), h = dt / sub, damp = Math.pow(.985, 120 * h);
+  const top = R.h + 2, GW = Math.ceil(G.cols / d) + 3, GH = Math.ceil((G.rows + top + 1) / d) + 3;
   for (let s = 0; s < sub; s++) {
-    for (const q of RB.p) { const vx = (q.x - q.px) * .996, vy = (q.y - q.py) * .996; q.px = q.x; q.py = q.y; q.x += vx; q.y += vy + acc * h * h; }
-    // one spatial grid per substep (pebbles move far less than a grid cell between iterations)
-    const head = new Int32Array(GW * GH).fill(-1), next = new Int32Array(RB.p.length), cellOf = new Int32Array(RB.p.length);
-    RB.p.forEach((q, i) => { const gx = Math.max(0, Math.min(GW - 1, Math.floor(q.x / d) + 1)), gy = Math.max(0, Math.min(GH - 1, Math.floor((q.y + top) / d) + 1)), k = gy * GW + gx; cellOf[i] = k; next[i] = head[k]; head[k] = i; });
+    for (const q of RB.p) { const vx = (q.x - q.px) * damp, vy = (q.y - q.py) * damp; q.px = q.x; q.py = q.y; q.x += vx; q.y += vy + acc * h * h; }
+    const n = RB.p.length, head = new Int32Array(GW * GH).fill(-1), next = new Int32Array(n), cellOf = new Int32Array(n);
+    for (let i = 0; i < n; i++) { const q = RB.p[i], k = Math.max(0, Math.min(GH - 1, Math.floor((q.y + top) / d) + 1)) * GW + Math.max(0, Math.min(GW - 1, Math.floor(q.x / d) + 1)); cellOf[i] = k; next[i] = head[k]; head[k] = i; }
     for (let it = 0; it < 3; it++) {
-      for (let i = 0; i < RB.p.length; i++) {
+      for (let i = 0; i < n; i++) {
         const q = RB.p[i], k0 = cellOf[i];
         for (let oy = -GW; oy <= GW; oy += GW) for (let ox = -1; ox <= 1; ox++) {
           const k = k0 + oy + ox; if (k < 0 || k >= head.length) continue;
@@ -2123,18 +2146,18 @@ function stepRubble(dtMs) {
     const q = RB.p[i]; if (q.y < G.rows + .45) continue;
     RB.p.splice(i, 1); RB.drained++; out++;
     const br = board.getBoundingClientRect(), cs = G.cs; // it keeps falling down the screen
-    SPILL.push({ x: br.left + G.ox + q.x * cs, y: br.top + G.oy + q.y * cs, vx: (q.x - q.px) * cs, vy: Math.max(2, (q.y - q.py) * cs), k: q.k, s: 2 * PEB_R * cs * q.s * 1.15 });
+    if (SPILL.length < 260) SPILL.push({ x: br.left + G.ox + q.x * cs, y: br.top + G.oy + q.y * cs, vx: (q.x - q.px) * cs, vy: Math.max(2, (q.y - q.py) * cs), k: q.k, s: 2 * PEB_R * cs * q.s * 1.15 });
   }
   if (out) {
     const goal = G.goals.find(g => g.type === 'rubble'), before = goal.left;
     goal.left = goal.shown = Math.max(0, RB.need - RB.drained);
-    if (goal.left !== before) renderGoalCounts(Math.floor(before / 5) !== Math.floor(goal.left / 5) ? goal : null);
+    if (goal.left !== before) renderGoalCounts(Math.floor(before / 10) !== Math.floor(goal.left / 10) ? goal : null);
     if (!throttle('pour', 90)) nz({ dur: .12, vol: .06, bp: 900 + Math.random() * 900, q: 2, verb: .1 }); // a rattle of falling stones
   }
 }
 function drawRubbleSim(g) {
-  const cs = G.cs, sz = 2 * PEB_R * cs * 1.15;
-  for (const q of G.rubble.p) drawRock(g, q.k, G.ox + q.x * cs, G.oy + q.y * cs, sz * q.s);
+  const cs = G.cs, sz = 2 * PEB_R * cs * 1.18, top = -G.oy / cs - 1;
+  for (const q of G.rubble.p) if (q.y > top) drawRock(g, q.k, G.ox + q.x * cs, G.oy + q.y * cs, sz * q.s);
 }
 function makePeril() { return { pDisp: 0, state: 'danger', t0: 0 }; }
 function tickRescue(dt) {
@@ -2169,15 +2192,49 @@ function showRescueLose() {
   card.querySelector('[data-a=retry]').onclick = () => { closeModal(); startLevel(G.n); };
 }
 const PERIL = { key: '', bg: null, cache: new Map() };
-const ROCK_PALS = [PAL.rock, { light: '#c9cfdd', base: '#7c8398', dark: '#3e4458', line: '#1a1d28' }, { light: '#b8f0e0', base: '#4fb8a0', dark: '#1f6a5a', line: '#0a3028' }, PAL.gold];
+const STONE_PALS = [ // granite, slate, sandstone, limestone
+  { light: '#c4c7cf', base: '#8b8f9a', dark: '#4a4d57', line: '#1f2128' },
+  { light: '#9aa0ad', base: '#5f6573', dark: '#2c3039', line: '#121419' },
+  { light: '#d8c3a0', base: '#a68a62', dark: '#5e4a32', line: '#261c10' },
+  { light: '#e6e2d8', base: '#b5ae9f', dark: '#6c665a', line: '#2a2720' },
+];
+function stoneArt(g, k) { // a rough little rock: lumpy outline, matte shading, grit speckles, the odd crack
+  const R = rng(k * 977 + 31), pal = STONE_PALS[k % STONE_PALS.length], n = 7 + Math.floor(R() * 3), pts = [];
+  const sx = .9 + R() * .2, sy = .78 + R() * .16, rot = R() * 7;
+  for (let i = 0; i < n; i++) { const a = rot + i / n * Math.PI * 2 + (R() - .5) * .5, rad = .36 + R() * .1; pts.push([Math.cos(a) * rad * sx, Math.sin(a) * rad * sy]); }
+  const path = () => {
+    g.beginPath();
+    const mid = i => { const a = pts[i % n], b = pts[(i + 1) % n]; return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; };
+    let m = mid(n - 1); g.moveTo(m[0], m[1]);
+    for (let i = 0; i < n; i++) { m = mid(i); g.quadraticCurveTo(pts[i][0], pts[i][1], m[0], m[1]); }
+    g.closePath();
+  };
+  g.save(); g.translate(0, .04); path(); g.fillStyle = 'rgba(0,0,0,.35)'; g.fill(); g.restore();   // contact shadow
+  path(); const body = g.createRadialGradient(-.16, -.2, .02, -.02, -.02, .55);
+  body.addColorStop(0, pal.light); body.addColorStop(.5, pal.base); body.addColorStop(1, pal.dark); g.fillStyle = body; g.fill();
+  g.save(); path(); g.clip();
+  for (let i = 0; i < 16; i++) { // grit
+    const x = (R() - .5) * .8, y = (R() - .5) * .7, s = .012 + R() * .025;
+    g.fillStyle = R() < .55 ? hexA(pal.dark, .55) : hexA(pal.light, .6); g.beginPath(); g.arc(x, y, s, 0, 7); g.fill();
+  }
+  if (R() < .5) { // a hairline crack
+    g.strokeStyle = hexA(pal.line, .55); g.lineWidth = .025; g.beginPath();
+    let x = (R() - .5) * .3, y = -.3; g.moveTo(x, y);
+    for (let i = 0; i < 3; i++) { x += (R() - .5) * .25; y += .18; g.lineTo(x, y); } g.stroke();
+  }
+  g.lineWidth = .1; g.strokeStyle = hexA(pal.dark, .45); path(); g.stroke();                  // shaded rim
+  g.save(); g.translate(.015, .03); path(); g.lineWidth = .04; g.strokeStyle = hexA(pal.light, .35); g.stroke(); g.restore(); // worn top edge
+  g.restore();
+  path(); g.lineWidth = .028; g.strokeStyle = hexA(pal.line, .7); g.stroke();
+}
 function cachedArt(id, px, draw) {
   let c = PERIL.cache.get(id + px);
   if (!c) { c = document.createElement('canvas'); c.width = c.height = px; const g = c.getContext('2d'); g.translate(px / 2, px / 2); g.scale(px, px); const old = PX; PX = px; draw(g); PX = old; PERIL.cache.set(id + px, c); }
   return c;
 }
 function drawRock(g, k, x, y, size) {
-  const px = Math.max(4, Math.round(size * DPR / 2) * 2);
-  g.drawImage(cachedArt('rock' + k, px, g => toy(g, g => { g.beginPath(); g.moveTo(-.4, -.1); g.lineTo(-.15, -.4); g.lineTo(.3, -.32); g.lineTo(.42, .05); g.lineTo(.2, .38); g.lineTo(-.28, .32); g.closePath(); }, ROCK_PALS[k], null, { x: -.14, y: -.16, r: .16 })), x - size / 2, y - size / 2, size, size);
+  const px = Math.max(4, Math.round(size * DPR / 4) * 4);
+  g.drawImage(cachedArt('stone' + k, px, g => stoneArt(g, k)), x - size / 2, y - size / 2, size, size);
 }
 function hostImage(mood, px, blink) { // the King (or the Count), feet at the bottom of the image
   return cachedArt('host' + mood + blink + HALLOWEEN, px, g => { g.translate(0, -.02); drawKing(g, mood, blink ? 3450 : 500); });
@@ -2467,8 +2524,8 @@ function buildBoardBg() {
     }
   };
   g.save(); g.shadowColor = 'rgba(0,0,0,.55)'; g.shadowBlur = 16; g.shadowOffsetY = 7; each(10, 16, '#6a3f0c'); g.restore();
-  if (G.def.rescue) { // the shaft the rubble hangs in
-    const R = G.def.rescue, x = G.ox + R.x0 * cs, w = R.w * cs;
+  if (G.def.rescue) for (const [x0, w0] of G.def.rescue.shafts) { // the shafts the rubble pours from
+    const x = G.ox + x0 * cs, w = w0 * cs;
     g.save(); g.beginPath(); g.rect(x - 4, 0, w + 8, G.oy); g.clip();
     bricks(g, x - 4, 0, x + w + 8, G.oy, 24, 11, SP(28, 272), SP(14, 22), SP(22, 10), 4);
     g.fillStyle = 'rgba(0,0,0,.35)'; g.fillRect(x - 4, 0, w + 8, G.oy); g.restore();
@@ -2713,7 +2770,8 @@ function fillGoalIcons(card, goals) { goals.forEach((g, i) => drawIcon(card.quer
 function levelGoals(n) {
   const def = getLevel(n); const out = def.g.map(([c, k]) => ({ key: 'k' + c, n: k }));
   let cr = 0, st = 0, ic = 0; for (const row of def.L) for (const ch of row) { if (ch === 'C' || ch === 'D') cr++; if (ch === 'S') st++; if (ch === 'I') ic++; }
-  if (cr) out.push({ key: 'crate1', n: cr }); if (st) out.push({ key: 'stone2', n: st }); if (ic) out.push({ key: 'iceGoal', n: ic }); if (def.rescue) out.push({ key: 'rubble1', n: '90%' }); // pour out 90% of the rubble
+  if (def.rescue) cr = st = ic = 0;
+  if (cr) out.push({ key: 'crate1', n: cr }); if (st) out.push({ key: 'stone2', n: st }); if (ic) out.push({ key: 'iceGoal', n: ic }); if (def.rescue) out.push({ key: 'rubble1', n: def.rescue.need }); // rubble to drain
   return { def, goals: out };
 }
 function openLevel(n) {
