@@ -1617,7 +1617,7 @@ async function resolveGroups(groups, pref) {
     }
     sfx.special(); kingTipFor(spawns[0].sp);
   }
-  await delay(spawns.length ? 120 : 210);
+  await delay(spawns.length ? 90 : 100); // pieces above start dropping right after the pop
 }
 async function cascade() {
   for (let guard = 0; guard < 80; guard++) {
@@ -1673,12 +1673,12 @@ function diagonal() {
   }
   return mv;
 }
-function animateFall(mv, stagger = 14) {
+function animateFall(mv, stagger = 6) {
   return Promise.all(mv.map(({ t, r, c }) => {
     const d = Math.hypot(r - t.y, c - t.x);
     return delay(c * stagger).then(() => {
       t.falling = true;
-      return tween(t, { x: c, y: r }, 90 + 80 * Math.sqrt(d), easeIn);
+      return tween(t, { x: c, y: r }, 65 + 60 * Math.sqrt(d), easeIn); // a quick, gravity-like drop
     }).then(() => { t.falling = false; kick(t, 0, -Math.min(4, 1 + d * .7), Math.min(7, 2.5 + d)); sfx.land(d); });
   }));
 }
@@ -2091,21 +2091,26 @@ function collideSolids(q, R) {
   }
 }
 function stepRubble(dtMs) {
-  const RB = G.rubble, R = G.def.rescue, r = PEB_R, d = 2 * r, d2 = d * d, sub = 2, h = Math.min(dtMs, 34) / 1000 / sub, acc = 28;
+  // Fast, snappy sand: strong gravity, little drag. Substeps scale with the frame time so the rubble pours
+  // at full speed on slow phones too (each substep is at most ~8ms).
+  const RB = G.rubble, R = G.def.rescue, r = PEB_R, d = 2 * r, d2 = d * d, acc = 75;
+  const dt = Math.min(dtMs, 60) / 1000, sub = Math.max(2, Math.ceil(dt / .0085)), h = dt / sub;
+  const GW = Math.ceil(G.cols / d) + 2, GH = Math.ceil((G.rows + R.h + 2) / d) + 2, top = R.h + 1;
   for (let s = 0; s < sub; s++) {
-    for (const q of RB.p) { const vx = (q.x - q.px) * .985, vy = (q.y - q.py) * .985; q.px = q.x; q.py = q.y; q.x += vx; q.y += vy + acc * h * h; }
+    for (const q of RB.p) { const vx = (q.x - q.px) * .996, vy = (q.y - q.py) * .996; q.px = q.x; q.py = q.y; q.x += vx; q.y += vy + acc * h * h; }
+    // one spatial grid per substep (pebbles move far less than a grid cell between iterations)
+    const head = new Int32Array(GW * GH).fill(-1), next = new Int32Array(RB.p.length), cellOf = new Int32Array(RB.p.length);
+    RB.p.forEach((q, i) => { const gx = Math.max(0, Math.min(GW - 1, Math.floor(q.x / d) + 1)), gy = Math.max(0, Math.min(GH - 1, Math.floor((q.y + top) / d) + 1)), k = gy * GW + gx; cellOf[i] = k; next[i] = head[k]; head[k] = i; });
     for (let it = 0; it < 3; it++) {
-      const hash = new Map(), key = (i, j) => (i + 64) * 4096 + (j + 64);
-      for (const q of RB.p) { const k = key(Math.floor(q.x / d), Math.floor(q.y / d)); let b = hash.get(k); if (!b) hash.set(k, b = []); b.push(q); }
-      for (const q of RB.p) {
-        const i0 = Math.floor(q.x / d), j0 = Math.floor(q.y / d);
-        for (let i = i0 - 1; i <= i0 + 1; i++) for (let j = j0 - 1; j <= j0 + 1; j++) {
-          const b = hash.get(key(i, j)); if (!b) continue;
-          for (const o of b) {
-            if (o === q) continue;
-            let dx = o.x - q.x, dy = o.y - q.y; const dd = dx * dx + dy * dy;
+      for (let i = 0; i < RB.p.length; i++) {
+        const q = RB.p[i], k0 = cellOf[i];
+        for (let oy = -GW; oy <= GW; oy += GW) for (let ox = -1; ox <= 1; ox++) {
+          const k = k0 + oy + ox; if (k < 0 || k >= head.length) continue;
+          for (let j = head[k]; j !== -1; j = next[j]) {
+            if (j <= i) continue;
+            const o = RB.p[j]; let dx = o.x - q.x, dy = o.y - q.y; const dd = dx * dx + dy * dy;
             if (dd >= d2 || dd < 1e-12) continue;
-            const dist = Math.sqrt(dd), push = (d - dist) / dist * .25; dx *= push; dy *= push;
+            const dist = Math.sqrt(dd), push = (d - dist) / dist * .5; dx *= push; dy *= push;
             q.x -= dx; q.y -= dy; o.x += dx; o.y += dy;
           }
         }
