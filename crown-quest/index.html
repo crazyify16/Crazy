@@ -3283,13 +3283,14 @@ function castle3D() {
   if (W3.key !== key) {
     disposeWorld(); W3.world = buildWorld(viewArea); W3.key = key; W3.focus = null; GFX.times = [];
     W3.yawT = W3.yaw = .35; W3.pitchT = W3.pitch = .36; W3.distT = W3.dist = WORLD_DIST[viewArea]; W3.intro = performance.now(); W3.vYaw = 0;
-    buildPipeline();
+    buildPipeline(); warmUp();
   }
   const appear = pendingAppear; pendingAppear = null;
   syncItems(appear);
   setHostMood();
+  const wasOn = W3.on && !$('#scene3d').hidden;
   $('#scene').hidden = true; $('#scene3d').hidden = false; W3.on = true;
-  size3D(); render3D(performance.now());
+  size3D(); if (!wasOn) render3D(performance.now()); // already running: the frame loop draws it (never twice in one frame)
   return true;
 }
 function init3D() {
@@ -3352,6 +3353,24 @@ const GRADE_FRAG = `uniform sampler2D tDiffuse; uniform vec2 res; uniform float 
     col += (hash(uv * res + fract(time) * 100.0) - 0.5) * grain;
     gl_FragColor = vec4(col, 1.0);
   }`;
+// Compile every shader and upload every texture while the area opens (all upgrades in their finished look, the
+// landing effects switched on), so building something later never stalls mid-animation on a first-time compile.
+function warmUp() {
+  const Wd = W3.world, r = W3.r; size3D();
+  { // put the camera where the fly-in starts, so even this warm-up frame shows the right view
+    const t = Wd.target, ym = WORLD_YAW[viewArea], yaw = W3.yaw + .9 * Math.sign(ym - .6 || 1) * Math.min(1, ym), pitch = W3.pitch + .35, dist = W3.dist * 1.7;
+    W3.cam.position.set(t.x + Math.sin(yaw) * Math.cos(pitch) * dist, t.y + Math.sin(pitch) * dist, t.z + Math.cos(yaw) * Math.cos(pitch) * dist); W3.cam.lookAt(t);
+  }
+  const fx = Wd.fx.all; fx.forEach(o => { o.visible = true; });
+  Wd.ghostProbe.visible = true;
+  const rt = W3.post ? W3.post.composer.renderTarget1 : null;
+  try {
+    r.setRenderTarget(rt); r.compile(Wd.scene, W3.cam); r.setRenderTarget(null);
+    Wd.scene.traverse(o => { const m = o.material; if (!m) return; for (const mm of [].concat(m)) for (const k of ['map', 'normalMap', 'roughnessMap']) if (mm[k] && r.initTexture) r.initTexture(mm[k]); });
+    if (W3.post) W3.post.composer.render(0); else r.render(Wd.scene, W3.cam);
+  } catch (e) { /* warming is best-effort */ }
+  fx.forEach(o => { o.visible = false; }); Wd.ghostProbe.visible = false;
+}
 function disposePipeline() {
   if (!W3.post) return;
   W3.post.composer.renderTarget1.dispose(); W3.post.composer.renderTarget2.dispose();
@@ -3399,7 +3418,7 @@ function disposeWorld() {
   W3.world.scene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) [].concat(o.material).forEach(m => { for (const k of ['map', 'normalMap', 'roughnessMap']) if (m[k]) m[k].dispose(); m.dispose(); }); });
   for (const m of Object.values(W3.world.mats)) m.dispose();
   if (W3.world.envRT) W3.world.envRT.dispose();
-  DROPS.length = 0; PUFFS.length = 0;
+  DROPS.length = 0;
   W3.world = null;
 }
 // ---------- the render loop (called from the game's frame loop while the castle is showing)
@@ -3420,7 +3439,7 @@ function render3D(now) {
   cam.lookAt(tgt);
   Wd.time.value = now / 1000;
   for (const f of Wd.ticks) f(now, dt);
-  for (const it of Wd.items.values()) if (!it.built) it.ghostMats.forEach(m => m.opacity = .16 + .08 * Math.sin(now / 420));
+  Wd.ghostMat.opacity = .16 + .08 * Math.sin(now / 420);
   stepDrops(now, dt);
   const P = W3.post;
   if (P) {
@@ -3431,13 +3450,15 @@ function render3D(now) {
     P.composer.render(dt);
   } else W3.r.render(Wd.scene, cam);
   // automatic quality: if frames keep running slow, step down a level (and remember it for next time)
-  if (GFX.auto && !document.hidden && now - W3.intro > 2500) {
+  if (DROPS.length) W3.quietUntil = now + 1500; // never judge (or change) quality during a build animation
+  if (GFX.auto && !document.hidden && now - W3.intro > 2500 && now > (W3.quietUntil || 0)) {
     GFX.times.push(dt);
     if (GFX.times.length >= 90) {
-      const avg = GFX.times.reduce((a, b) => a + b, 0) / GFX.times.length; GFX.times = [];
+      const med = GFX.times.slice().sort((a, b) => a - b)[45]; GFX.times = []; // the median ignores one-off hitches
+      W3.slow = med > .028 ? (W3.slow || 0) + 1 : 0;
       const i = GFX_LEVELS.indexOf(GFX.level);
-      if (avg > .028 && i > 0) { S.gfxCap = GFX_LEVELS[i - 1]; save(); W3.key = ''; drawScene(); }
-      else if (avg > .04 && i === 0 && (W3.prScale || 1) > .7) { W3.prScale = (W3.prScale || 1) * .8; size3D(); }
+      if (W3.slow >= 2 && i > 0) { W3.slow = 0; S.gfxCap = GFX_LEVELS[i - 1]; save(); W3.key = ''; drawScene(); }
+      else if (W3.slow >= 2 && med > .04 && i === 0 && (W3.prScale || 1) > .7) { W3.slow = 0; W3.prScale = (W3.prScale || 1) * .8; size3D(); }
     }
   }
 }
@@ -3578,6 +3599,11 @@ function makeWorld(o) {
     if (p.cc) { m.clearcoat = p.cc; m.clearcoatRoughness = p.ccr ?? .08; }
     return (W.mats[key] = m);
   };
+  const hwG = HALLOWEEN; // the blueprint look, shared by every unbuilt part
+  W.ghostMat = new THREE.MeshBasicMaterial({ color: lin(hwG ? '#b070ff' : '#58c8ff'), transparent: true, opacity: .2, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false });
+  W.edgeMat = new THREE.LineBasicMaterial({ color: lin(hwG ? '#e0c0ff' : '#c8f0ff'), transparent: true, opacity: .75, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false });
+  W.ghostProbe = new THREE.Group(); W.ghostProbe.visible = false; W.scene.add(W.ghostProbe); // so warm-up compiles the blueprint shaders too
+  W.ghostProbe.add(new THREE.Mesh(new THREE.BoxGeometry(.01, .01, .01), W.ghostMat), new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(.01, .01, .01)), W.edgeMat));
   W.glow = (key, color, boost = 2.2) => W.mats[key] || (W.mats[key] = new THREE.MeshBasicMaterial({ color: lin(color).multiplyScalar(boost), toneMapped: false })); // brighter than white: it blooms
   return W;
 }
@@ -3761,19 +3787,18 @@ function setHostMood() {
 // Each upgrade's model is built once; unbuilt ones wear a glowing blueprint material.
 function item(W, key, build) {
   const g = new THREE.Group(); W.scene.add(g); build(g);
-  const it = { key, g, built: true, ghostMats: [], lights: [], extras: [] };
+  const it = { key, g, built: true, state: null, lights: [], extras: [] };
   g.traverse(o => { if (o.isMesh) o.userData.mat = o.material; if (o.isLight) it.lights.push(o); if (o.isPoints || o.isSprite) it.extras.push(o); });
   W.items.set(key, it);
 }
 function setBuilt(it, on) {
-  const hw = HALLOWEEN; it.built = on; it.ghostMats = [];
+  const W = W3.world; it.built = on; it.state = on;
   it.g.traverse(o => {
     if (o.isMesh) {
       if (on) { o.material = o.userData.mat; o.castShadow = o.userData.cast ?? true; }
-      else { if (o.userData.cast === undefined) o.userData.cast = o.castShadow; const gm = new THREE.MeshBasicMaterial({ color: lin(hw ? '#b070ff' : '#58c8ff'), transparent: true, opacity: .2, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }); it.ghostMats.push(gm); o.material = gm; o.castShadow = false; }
+      else { if (o.userData.cast === undefined) o.userData.cast = o.castShadow; o.material = W.ghostMat; o.castShadow = false; }
       if (!o.userData.edges && !on && o.geometry.type !== 'PlaneGeometry') { // blueprint outline
-        const e = new THREE.LineSegments(new THREE.EdgesGeometry(o.geometry, 25), new THREE.LineBasicMaterial({ color: lin(hw ? '#e0c0ff' : '#c8f0ff'), transparent: true, opacity: .75, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }));
-        o.add(e); o.userData.edges = e;
+        const e = new THREE.LineSegments(new THREE.EdgesGeometry(o.geometry, 25), W.edgeMat); o.add(e); o.userData.edges = e;
       }
       if (o.userData.edges) o.userData.edges.visible = !on;
     }
@@ -3786,62 +3811,69 @@ function syncItems(appear) {
   AREAS[viewArea].tasks.forEach(([key], k) => {
     const it = W.items.get(key); if (!it) return;
     const on = !!done[k];
-    if (it.built !== on || it.ghostMats.length === 0 && !on) setBuilt(it, on);
+    if (it.state !== on) setBuilt(it, on);
     if (key === appear && on) dropIn(it);
   });
 }
 // ---------- a newly built upgrade falls into place, bounces, and lands with a flash, a shockwave, dust and sparkles
-const DROPS = [], PUFFS = [];
+const DROPS = [];
+function fxPool(W) {
+  const hw = HALLOWEEN;
+  const points = (n, col, size, add) => {
+    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+    const p = new THREE.Points(geo, new THREE.PointsMaterial({ size, map: TEX.glow(col), transparent: true, depthWrite: false, blending: add ? THREE.AdditiveBlending : THREE.NormalBlending, toneMapped: !add }));
+    p.visible = false; p.frustumCulled = false; W.scene.add(p); return { p, vel: Array.from({ length: n }, () => [0, 0, 0]), n };
+  };
+  const ringCol = hw ? '#c890ff' : '#ffe08a';
+  const ring = mesh(W.scene, new THREE.RingGeometry(.8, 1, 64), new THREE.MeshBasicMaterial({ color: lin(ringCol).multiplyScalar(2.5), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false }), 0, .08, 0, { rx: -Math.PI / 2, cast: false, recv: false });
+  ring.visible = false;
+  const light = new THREE.PointLight(lin(ringCol), 0, 14, 2); W.scene.add(light); // always present (at zero), so the light count never changes
+  W.fx = { dust: points(50, hw ? 'rgba(150,130,180,1)' : 'rgba(230,210,180,1)', .9, false), spark: points(36, hw ? 'rgba(220,180,255,1)' : 'rgba(255,240,160,1)', .3, true), ring, light, t0: -1e9, at: null, r0: 1 };
+  W.fx.all = [W.fx.dust.p, W.fx.spark.p, ring];
+}
 function dropIn(it) {
   const box = new THREE.Box3().setFromObject(it.g), at = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3());
   DROPS.push({ it, t0: performance.now(), landed: false, at, size });
   it.g.position.y = 9;
   W3.focus = { at, t0: performance.now(), until: performance.now() + 2400 };
 }
-function stepDrops(now) {
+function burstFx(at, size) { // dust, sparkles, a shockwave ring and a flash of light, all reused
+  const F = W3.world.fx, spread = Math.max(1.4, Math.max(size.x, size.z) * .7);
+  for (const [sys, up] of [[F.dust, 1.2], [F.spark, 3.6]]) {
+    const a = sys.p.geometry.attributes.position.array;
+    for (let i = 0; i < sys.n; i++) {
+      const ang = Math.random() * Math.PI * 2, sp = (.6 + Math.random()) * spread;
+      a[i * 3] = at.x + Math.cos(ang) * size.x * .3; a[i * 3 + 1] = .2 + Math.random() * .4; a[i * 3 + 2] = at.z + Math.sin(ang) * size.z * .3;
+      sys.vel[i][0] = Math.cos(ang) * sp; sys.vel[i][1] = Math.random() * up; sys.vel[i][2] = Math.sin(ang) * sp;
+    }
+    sys.p.geometry.attributes.position.needsUpdate = true; sys.p.visible = true;
+  }
+  F.ring.position.set(at.x, .08, at.z); F.ring.visible = true; F.light.position.set(at.x, at.y + 1, at.z);
+  F.t0 = performance.now(); F.r0 = Math.max(1, Math.max(size.x, size.z) * .5);
+}
+function stepDrops(now, dt) {
   const bounce = t => { const n = 7.5625, d = 2.75; if (t < 1 / d) return n * t * t; if (t < 2 / d) return n * (t -= 1.5 / d) * t + .75; if (t < 2.5 / d) return n * (t -= 2.25 / d) * t + .9375; return n * (t -= 2.625 / d) * t + .984375; };
   for (let i = DROPS.length - 1; i >= 0; i--) {
     const d = DROPS[i], p = Math.min(1, (now - d.t0) / 1000);
     d.it.g.position.y = 9 * (1 - bounce(p));
-    if (!d.landed && p > .36) { d.landed = true; sfx.build(); W3.shake = .22; W3.bloomKick = 1.1; W3.flash = .12; puff(d.at, d.size); shockwave(d.at, d.size); }
+    if (!d.landed && p > .36) { d.landed = true; sfx.build(); W3.shake = .22; W3.bloomKick = 1.1; W3.flash = .12; burstFx(d.at, d.size); }
     if (p >= 1) { d.it.g.position.y = 0; DROPS.splice(i, 1); }
   }
-  for (let i = PUFFS.length - 1; i >= 0; i--) {
-    const P = PUFFS[i], t = (now - P.t0) / P.dur;
-    if (t >= 1 || !W3.world) { if (W3.world) W3.world.scene.remove(P.obj); P.obj.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); PUFFS.splice(i, 1); continue; }
-    P.step(t);
-  }
-}
-function puff(at, size) {
-  const W = W3.world, hw = HALLOWEEN;
-  for (const [n, col, sz, op, grav, up, add] of [[50, hw ? 'rgba(150,130,180,1)' : 'rgba(230,210,180,1)', .9, .55, -.4, 1.2, false], [36, hw ? 'rgba(220,180,255,1)' : 'rgba(255,240,160,1)', .3, 1, -.2, 3.6, true]]) {
-    const pos = new Float32Array(n * 3), vel = [];
-    for (let i = 0; i < n; i++) {
-      const a = Math.random() * Math.PI * 2, sp = (.6 + Math.random()) * Math.max(1.4, Math.max(size.x, size.z) * .7);
-      pos[i * 3] = at.x + Math.cos(a) * size.x * .3; pos[i * 3 + 1] = .2 + Math.random() * .4; pos[i * 3 + 2] = at.z + Math.sin(a) * size.z * .3;
-      vel.push([Math.cos(a) * sp, Math.random() * up, Math.sin(a) * sp]);
+  const F = W3.world.fx, t = (now - F.t0) / 1200;
+  if (t >= 0 && t < 1) {
+    const step = Math.min(dt, .05);
+    for (const [sys, grav, op] of [[F.dust, -.4, .55], [F.spark, -.2, 1]]) {
+      const a = sys.p.geometry.attributes.position.array;
+      for (let k = 0; k < sys.n; k++) { const v = sys.vel[k]; a[k * 3] += v[0] * step; a[k * 3 + 1] += v[1] * step; a[k * 3 + 2] += v[2] * step; v[1] += grav * step * 60 * .016; v[0] *= Math.pow(.96, step * 60); v[2] *= Math.pow(.96, step * 60); }
+      sys.p.geometry.attributes.position.needsUpdate = true; sys.p.material.opacity = op * (1 - t);
     }
-    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: sz, map: TEX.glow(col), transparent: true, opacity: op, depthWrite: false, blending: add ? THREE.AdditiveBlending : THREE.NormalBlending, toneMapped: !add }));
-    W.scene.add(pts);
-    PUFFS.push({ obj: pts, t0: performance.now(), dur: 1200, step(t) {
-      const a = geo.attributes.position;
-      for (let k = 0; k < vel.length; k++) { const v = vel[k]; a.array[k * 3] += v[0] * .016; a.array[k * 3 + 1] += v[1] * .016; a.array[k * 3 + 2] += v[2] * .016; v[1] += grav * .016; v[0] *= .96; v[2] *= .96; }
-      a.needsUpdate = true; pts.material.opacity = op * (1 - t);
-    } });
-  }
-}
-function shockwave(at, size) {
-  const W = W3.world, hw = HALLOWEEN, col = hw ? '#c890ff' : '#ffe08a', grp = new THREE.Group(); W.scene.add(grp);
-  const ring = mesh(grp, new THREE.RingGeometry(.8, 1, 64), new THREE.MeshBasicMaterial({ color: lin(col).multiplyScalar(2.5), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false }), at.x, .08, at.z, { rx: -Math.PI / 2, cast: false, recv: false });
-  const L = new THREE.PointLight(lin(col), 30, 14, 2); L.position.set(at.x, at.y + 1, at.z); grp.add(L);
-  const r0 = Math.max(1, Math.max(size.x, size.z) * .5);
-  PUFFS.push({ obj: grp, t0: performance.now(), dur: 900, step(t) { const s = r0 + t * 7; ring.scale.set(s, s, s); ring.material.opacity = (1 - t) * (1 - t); L.intensity = 30 * Math.pow(1 - t, 3); } });
+    const tr = Math.min(1, t * 1200 / 900), s = F.r0 + tr * 7; F.ring.scale.set(s, s, s); F.ring.material.opacity = (1 - tr) * (1 - tr); F.light.intensity = 30 * Math.pow(1 - tr, 3);
+  } else if (F.dust.p.visible || F.ring.visible) { F.dust.p.visible = F.spark.p.visible = F.ring.visible = false; F.light.intensity = 0; }
 }
 
 // ---------- the four places
 const WORLD_DIST = [17, 18, 19, 16], WORLD_YAW = [.5, 1.25, 1.25, 1.25], WORLD_FAR = [19, 26, 26, 24]; // the Throne Room is indoors: don't swing through its walls
-function buildWorld(area) { return [throneRoom3D, garden3D, gate3D, tower3D][area](); }
+function buildWorld(area) { const W = [throneRoom3D, garden3D, gate3D, tower3D][area](); fxPool(W); return W; }
 function stoneMat(W, key, hw, rep, rows = 8) { return W.mat(key, '#ffffff', { ...pbr('bricks' + hw + rows, rep, hw ? PAINT.bricks('#4e4862', '#1e1828', rows) : PAINT.bricks('#d8c4a0', '#9a8466', rows), 3.2), r: 1, ns: 1.1 }); }
 const DAY_GRADE = { sat: 1.12, contrast: 1.05, tint: [1.03, 1.01, .96], vignette: .28, tilt: .85 }, NIGHT_GRADE = { sat: 1.05, contrast: 1.1, tint: [.93, .94, 1.1], vignette: .45, tilt: .85 };
 function throneRoom3D() {
