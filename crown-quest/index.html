@@ -155,6 +155,24 @@ button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
 .castle-head h2 { margin: 0; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--display); font-weight: 400; font-size: clamp(18px, 6.2vw, 26px); color: var(--gold); text-shadow: 0 3px 0 var(--gold-deep); }
 #scene3d { width: 100%; aspect-ratio: 4/3; border-radius: 18px; display: block; touch-action: none; cursor: grab; box-shadow: 0 6px 0 #0d1028, 0 0 0 4px rgba(255,255,255,.1); }
 #scene[hidden], #scene3d[hidden] { display: none; }
+.scene-wrap { position: relative; }
+.scene-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 42px; height: 42px; border-radius: 50%; padding: 0; font-size: 26px; line-height: 1; color: #fff; display: grid; place-items: center; z-index: 2; }
+.scene-nav.prev { left: 8px; } .scene-nav.next { right: 8px; }
+.scene-nav:disabled { opacity: .3; }
+.scene-nav[hidden], .kingdom-btn[hidden] { display: none; }
+.kingdom-btn { position: absolute; top: 8px; right: 8px; padding: 7px 12px; font-size: 14px; font-weight: 800; color: #fff; z-index: 2; border-radius: 12px; }
+.area-dots { position: absolute; left: 0; right: 0; bottom: 8px; display: flex; justify-content: center; gap: 6px; pointer-events: none; z-index: 2; }
+.area-dots i { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,.35); box-shadow: 0 1px 2px rgba(0,0,0,.5); }
+.area-dots i.on { background: var(--gold); width: 20px; border-radius: 4px; }
+.area-dots i.locked { background: rgba(0,0,0,.4); }
+.realm { cursor: pointer; flex-direction: column; align-items: stretch !important; gap: 6px; }
+.realm .rh { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.realm .rh b { font-family: var(--display); font-weight: 400; color: var(--gold); font-size: 18px; }
+.realm .rbar { height: 6px; border-radius: 3px; background: rgba(0,0,0,.35); overflow: hidden; } .realm .rbar i { display: block; height: 100%; background: linear-gradient(90deg, var(--gold), #ffe9a0); }
+.realm .ups { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; opacity: .9; }
+.realm .ups .up { white-space: nowrap; flex: none; }
+.realm .ups .up.y { color: #8eea7a; } .realm .ups .up.n { opacity: .55; }
+.realm.locked { opacity: .55; cursor: default; }
 #scene { width: 100%; aspect-ratio: 16/10; max-width: 100%; border-radius: 18px; display: block; box-shadow: 0 6px 0 #0d1028, 0 0 0 4px rgba(255,255,255,.1); }
 .prog { height: 14px; border-radius: 7px; background: rgba(0,0,0,.4); overflow: hidden; }
 .prog i { display: block; height: 100%; background: linear-gradient(90deg, var(--gold), #ffe48a); border-radius: 7px; transition: width .4s; }
@@ -255,8 +273,14 @@ body.halloween .node.hard:not(.locked):not(.done) { background: radial-gradient(
       <h2 id="areaName">Throne Room</h2>
       <div class="pill"><canvas class="ico" data-icon="star" width="40" height="40"></canvas><span id="starCount2">0</span></div>
     </div>
-    <canvas id="scene" width="640" height="400"></canvas>
-    <canvas id="scene3d" hidden aria-label="The castle in 3D. Drag to look around."></canvas>
+    <div class="scene-wrap">
+      <canvas id="scene" width="640" height="400"></canvas>
+      <canvas id="scene3d" hidden aria-label="The castle in 3D. Drag to look around."></canvas>
+      <button class="panel scene-nav prev" id="areaPrev" aria-label="Previous area">‹</button>
+      <button class="panel scene-nav next" id="areaNext" aria-label="Next area">›</button>
+      <button class="panel kingdom-btn" id="kingdomBtn">Kingdom</button>
+      <div class="area-dots" id="areaDots"></div>
+    </div>
     <div class="prog"><i id="areaProg" style="width:0%"></i></div>
     <div class="tasks" id="tasks"></div>
   </section>
@@ -3210,9 +3234,42 @@ const AREAS = [
 ];
 const areaDone = i => AREAS[i].tasks.every((_, k) => S.tasks[i] && S.tasks[i][k]);
 function currentArea() { for (let i = 0; i < AREAS.length; i++) if (!areaDone(i)) return i; return AREAS.length - 1; }
-let viewArea = 0;
-function openCastle() { viewArea = currentArea(); show('castle'); renderCastle(); }
+let viewArea = 0, viewKingdom = false;
+const reachArea = () => currentArea(); // areas up to the one you're working on can be visited
+function openCastle() { viewArea = currentArea(); viewKingdom = false; show('castle'); renderCastle(); }
+function goArea(a) { if (a < 0 || a > reachArea() || a >= AREAS.length) return; viewArea = a; viewKingdom = false; sfx.swap(); renderCastle(); }
+function castleNav() { // the arrows, dots and the Kingdom button over the scene
+  const reach = reachArea();
+  $('#areaPrev').hidden = $('#areaNext').hidden = viewKingdom;
+  $('#areaPrev').disabled = viewArea <= 0; $('#areaNext').disabled = viewArea >= Math.min(reach, AREAS.length - 1);
+  $('#areaNext').textContent = viewArea >= reach && viewArea < AREAS.length - 1 ? '\u{1F512}' : '\u203a';
+  $('#kingdomBtn').textContent = viewKingdom ? SP('Back to castle', 'Back to castle') : SP('Kingdom map', 'Kingdom map');
+  $('#areaDots').innerHTML = viewKingdom ? '' : AREAS.map((_, i) => `<i class="${i === viewArea ? 'on' : i > reach ? 'locked' : ''}"></i>`).join('');
+}
+function renderKingdomPanel() { // every upgrade in the kingdom, area by area
+  const list = $('#tasks'); list.innerHTML = ''; const reach = reachArea();
+  let all = 0, built = 0;
+  AREAS.forEach((A, a) => {
+    const done = S.tasks[a] || [], n = A.tasks.filter((_, k) => done[k]).length; all += A.tasks.length; built += n;
+    const row = document.createElement('div'); row.className = 'task realm' + (a > reach ? ' locked' : '');
+    row.innerHTML = `<div class="rh"><b>${SP(A.name, A.hname)}</b><span>${a > reach ? '\u{1F512} Locked' : n === A.tasks.length ? '\u2605 Restored' : `${n}/${A.tasks.length} built`}</span></div>
+      <div class="rbar"><i style="width:${n / A.tasks.length * 100}%"></i></div>
+      <div class="ups">${A.tasks.map(([, label], k) => `<div class="up ${done[k] ? 'y' : 'n'}">${done[k] ? '\u2713' : '\u25cb'} ${label}</div>`).join('')}</div>`;
+    if (a <= reach) row.onclick = () => goArea(a);
+    list.appendChild(row);
+  });
+  $('#areaProg').style.width = (built / all * 100) + '%';
+  return built;
+}
+$('#areaPrev').onclick = () => goArea(viewArea - 1);
+$('#areaNext').onclick = () => goArea(viewArea + 1);
+$('#kingdomBtn').onclick = () => { viewKingdom = !viewKingdom; renderCastle(); };
 function renderCastle() {
+  castleNav();
+  if (viewKingdom) {
+    $('#areaName').textContent = SP('The Kingdom', 'The Dark Kingdom'); $('#starCount2').textContent = shown(starBalance());
+    renderKingdomPanel(); drawScene(); return;
+  }
   const A = AREAS[viewArea], done = S.tasks[viewArea] || [];
   $('#areaName').textContent = SP(A.name, A.hname); $('#starCount2').textContent = shown(starBalance());
   $('#areaProg').style.width = (done.filter(Boolean).length / A.tasks.length * 100) + '%';
@@ -3279,10 +3336,10 @@ function castle3D() {
   if (!W3.ready) { load3D().then(ok => { W3.ready = ok; if (!ok) W3.failed = true; if (!$('#castle').hidden) drawScene(); }); return false; }
   if (!W3.r) { try { init3D(); } catch (e) { W3.failed = true; return false; } }
   GFX.level = pickGfx();
-  const key = viewArea + ':' + HALLOWEEN + ':' + GFX.level;
+  const key = (viewKingdom ? 'K' : viewArea) + ':' + HALLOWEEN + ':' + GFX.level;
   if (W3.key !== key) {
     disposeWorld(); W3.world = buildWorld(viewArea); W3.key = key; W3.focus = null; GFX.times = [];
-    W3.yawT = W3.yaw = .35; W3.pitchT = W3.pitch = .36; W3.distT = W3.dist = WORLD_DIST[viewArea]; W3.intro = performance.now(); W3.vYaw = 0;
+    W3.yawT = W3.yaw = viewKingdom ? .5 : .35; W3.pitchT = W3.pitch = viewKingdom ? .82 : .36; W3.distT = W3.dist = camDist(); W3.intro = performance.now(); W3.vYaw = 0;
     buildPipeline(); warmUp();
   }
   const appear = pendingAppear; pendingAppear = null;
@@ -3305,20 +3362,30 @@ function init3D() {
     const p = W3.ptrs.get(e.pointerId); if (!p) return;
     const now = performance.now();
     if (W3.ptrs.size === 1) {
-      const ym = WORLD_YAW[viewArea], dy = -(e.clientX - p[0]) * .008;
+      const ym = camYaw(), dy = -(e.clientX - p[0]) * .008;
       W3.yawT = Math.max(-ym, Math.min(ym, W3.yawT + dy)); W3.vYaw = dy / Math.max(8, now - p[2]) * 16;
-      W3.pitchT = Math.max(.12, Math.min(1.0, W3.pitchT + (e.clientY - p[1]) * .005));
+      W3.pitchT = Math.max(.12, Math.min(viewKingdom ? 1.3 : 1.0, W3.pitchT + (e.clientY - p[1]) * .005));
     } else {
       const [a, b] = [...W3.ptrs.values()], d0 = Math.hypot(a[0] - b[0], a[1] - b[1]);
       W3.ptrs.set(e.pointerId, [e.clientX, e.clientY, now]);
       const [c, d] = [...W3.ptrs.values()], d1 = Math.hypot(c[0] - d[0], c[1] - d[1]);
-      if (d0 > 0 && d1 > 0) W3.distT = Math.max(8, Math.min(WORLD_FAR[viewArea], W3.distT * d0 / d1));
+      if (d0 > 0 && d1 > 0) W3.distT = Math.max(8, Math.min(camFar(), W3.distT * d0 / d1));
     }
     W3.ptrs.set(e.pointerId, [e.clientX, e.clientY, now]); W3.user = now;
   });
-  const up = e => { W3.ptrs.delete(e.pointerId); };
+  const down = new Map();
+  cv.addEventListener('pointerdown', e => down.set(e.pointerId, [e.clientX, e.clientY, performance.now()]));
+  const up = e => {
+    W3.ptrs.delete(e.pointerId); const d = down.get(e.pointerId); down.delete(e.pointerId);
+    if (!d || !viewKingdom || !W3.world || !W3.world.picks || Math.hypot(e.clientX - d[0], e.clientY - d[1]) > 8 || performance.now() - d[2] > 400) return;
+    const rect = cv.getBoundingClientRect(), ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2((e.clientX - rect.left) / rect.width * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1), W3.cam);
+    const hit = ray.intersectObjects(W3.world.picks, true)[0]; if (!hit) return;
+    let o = hit.object; while (o && o.userData.area === undefined) o = o.parent;
+    if (o) goArea(o.userData.area);
+  };
   cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
-  cv.addEventListener('wheel', e => { e.preventDefault(); W3.distT = Math.max(8, Math.min(WORLD_FAR[viewArea], W3.distT * (1 + e.deltaY * .001))); W3.user = performance.now(); }, { passive: false });
+  cv.addEventListener('wheel', e => { e.preventDefault(); W3.distT = Math.max(8, Math.min(camFar(), W3.distT * (1 + e.deltaY * .001))); W3.user = performance.now(); }, { passive: false });
 }
 function size3D() {
   const cv = $('#scene3d'), w = cv.clientWidth || 320, h = Math.round(w * .75);
@@ -3358,7 +3425,7 @@ const GRADE_FRAG = `uniform sampler2D tDiffuse; uniform vec2 res; uniform float 
 function warmUp() {
   const Wd = W3.world, r = W3.r; size3D();
   { // put the camera where the fly-in starts, so even this warm-up frame shows the right view
-    const t = Wd.target, ym = WORLD_YAW[viewArea], yaw = W3.yaw + .9 * Math.sign(ym - .6 || 1) * Math.min(1, ym), pitch = W3.pitch + .35, dist = W3.dist * 1.7;
+    const t = Wd.target, ym = camYaw(), yaw = W3.yaw + .9 * Math.sign(ym - .6 || 1) * Math.min(1, ym), pitch = W3.pitch + .35, dist = W3.dist * 1.7;
     W3.cam.position.set(t.x + Math.sin(yaw) * Math.cos(pitch) * dist, t.y + Math.sin(pitch) * dist, t.z + Math.cos(yaw) * Math.cos(pitch) * dist); W3.cam.lookAt(t);
   }
   const fx = Wd.fx.all; fx.forEach(o => { o.visible = true; });
@@ -3426,11 +3493,12 @@ function render3D(now) {
   const Wd = W3.world; if (!Wd) return;
   const dt = Math.min(.05, (now - (W3.last || now)) / 1000); W3.last = now;
   // camera: smooth follow with momentum, a gentle sway when idle, and a fly-in when the area opens
-  if (!W3.ptrs.size && Math.abs(W3.vYaw) > .0001) { const ym = WORLD_YAW[viewArea]; W3.yawT = Math.max(-ym, Math.min(ym, W3.yawT + W3.vYaw)); W3.vYaw *= Math.pow(.04, dt); }
-  if (!REDUCED && now - W3.user > 4500 && !W3.ptrs.size) W3.yawT += (Math.sin(now / 5200) * Math.min(.38, WORLD_YAW[viewArea] * .8) - W3.yawT) * .01;
+  if (!W3.ptrs.size && Math.abs(W3.vYaw) > .0001) { const ym = camYaw(); W3.yawT = Math.max(-ym, Math.min(ym, W3.yawT + W3.vYaw)); W3.vYaw *= Math.pow(.04, dt); }
+  if (viewKingdom) { if (!REDUCED && now - W3.user > 3000 && !W3.ptrs.size) W3.yawT += dt * .06; } // the kingdom slowly turns
+  else if (!REDUCED && now - W3.user > 4500 && !W3.ptrs.size) W3.yawT += (Math.sin(now / 5200) * Math.min(.38, camYaw() * .8) - W3.yawT) * .01;
   const k = 1 - Math.exp(-dt * 7); W3.yaw += (W3.yawT - W3.yaw) * k; W3.pitch += (W3.pitchT - W3.pitch) * k; W3.dist += (W3.distT - W3.dist) * k;
   const ie = REDUCED ? 1 : Math.min(1, (now - W3.intro) / 1800), ease = 1 - Math.pow(1 - ie, 3);
-  const yaw = W3.yaw + (1 - ease) * .9 * Math.sign(WORLD_YAW[viewArea] - .6 || 1) * Math.min(1, WORLD_YAW[viewArea]), pitch = W3.pitch + (1 - ease) * .35, dist = W3.dist * (1 + (1 - ease) * .7);
+  const yaw = W3.yaw + (1 - ease) * .9 * Math.sign(camYaw() - .6 || 1) * Math.min(1, camYaw()), pitch = W3.pitch + (1 - ease) * .35, dist = W3.dist * (1 + (1 - ease) * .7);
   const tgt = Wd.target.clone();
   if (W3.focus && now < W3.focus.until) tgt.lerp(W3.focus.at, Math.min(1, (W3.focus.until - now) / 500, (now - W3.focus.t0) / 500) * .6);
   const cp = Math.cos(pitch), cam = W3.cam;
@@ -3682,6 +3750,7 @@ function skyDome(o) {
 }
 // Lights, sky, fog, and an image-based environment for reflections.
 function lights(W, o) {
+  if (W.mini) return;
   const S3 = W.scene;
   S3.add(new THREE.HemisphereLight(lin(o.sky), lin(o.ground), o.hemi));
   const sun = new THREE.DirectionalLight(lin(o.sun), o.sunI); sun.position.set(...o.sunAt).add(W.target); sun.castShadow = true;
@@ -3698,6 +3767,7 @@ function lights(W, o) {
 }
 // drifting motes: sunlit dust by day, fireflies by night, petals in the garden
 function motes(W, n, spread, y0, y1, o = {}) {
+  if (W.mini) return;
   const hw = HALLOWEEN, pos = new Float32Array(n * 3), seed = [];
   for (let i = 0; i < n; i++) { pos[i * 3] = (Math.random() - .5) * spread; pos[i * 3 + 1] = y0 + Math.random() * (y1 - y0); pos[i * 3 + 2] = (Math.random() - .5) * spread; seed.push(Math.random() * 10); }
   const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -3709,7 +3779,7 @@ function motes(W, n, spread, y0, y1, o = {}) {
 }
 // grass: thousands of instanced blades, each swaying in a shader-driven wind
 function grass(W, count, allowed, base, tipc, span = 34) {
-  if (!gfxAt('medium')) return;
+  if (!gfxAt('medium') || W.mini) return;
   count = gfxAt('high') ? count : count * .45 | 0;
   const geo = new THREE.PlaneGeometry(.09, .55, 1, 4); geo.translate(0, .275, 0);
   const p = geo.attributes.position; for (let i = 0; i < p.count; i++) { const y = p.getY(i) / .55; p.setX(i, p.getX(i) * (1 - y * .92)); }
@@ -3736,7 +3806,7 @@ function grass(W, count, allowed, base, tipc, span = 34) {
 }
 // birds by day, bats by night: little flocks circling with flapping wings
 function flock(W, n, cx, cy, cz, R) {
-  if (!gfxAt('medium')) return;
+  if (!gfxAt('medium') || W.mini) return;
   const hw = HALLOWEEN, mat = W.mat('flyer' + hw, hw ? '#120c18' : '#2a2a34', { r: .9, side: THREE.DoubleSide });
   for (let i = 0; i < n; i++) {
     const b = group(W.scene), wings = [];
@@ -3768,6 +3838,7 @@ function tree(W, parent, x, z, sc = 1) {
 }
 // The King (or the Count) stands in the scene as a cut-out facing the camera.
 function addHost(W, x, z) {
+  if (W.mini) return;
   const cv = document.createElement('canvas'); cv.width = cv.height = 512;
   const tex = new THREE.CanvasTexture(cv); tex.encoding = THREE.sRGBEncoding;
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, toneMapped: false }));
@@ -3778,7 +3849,8 @@ function addHost(W, x, z) {
 }
 function setHostMood() {
   const h = W3.world && W3.world.host; if (!h) return;
-  const done = S.tasks[viewArea] || [], mood = areaDone(viewArea) ? 'cheer' : done.some(Boolean) ? 'happy' : 'worried';
+  const done = viewKingdom ? AREAS.flatMap((A, a) => A.tasks.map((_, k) => !!(S.tasks[a] || [])[k])) : S.tasks[viewArea] || [];
+  const mood = (viewKingdom ? done.every(Boolean) : areaDone(viewArea)) ? 'cheer' : done.some(Boolean) ? 'happy' : 'worried';
   if (h.mood === mood && h.drawn) return;
   h.mood = mood; h.drawn = true;
   const g = h.cv.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, 512, 512); g.translate(256, 262); g.scale(470, 470); drawKing(g, mood, 500);
@@ -3807,7 +3879,9 @@ function setBuilt(it, on) {
   for (const x of it.extras) x.visible = on;
 }
 function syncItems(appear) {
-  const W = W3.world, done = S.tasks[viewArea] || [];
+  const W = W3.world;
+  if (W.kingdom) { AREAS.forEach((A, a) => A.tasks.forEach(([key], k) => { const it = W.items.get(a + ':' + key), on = !!(S.tasks[a] || [])[k]; if (it && it.state !== on) setBuilt(it, on); })); drawKingdomLabels(); return; }
+  const done = S.tasks[viewArea] || [];
   AREAS[viewArea].tasks.forEach(([key], k) => {
     const it = W.items.get(key); if (!it) return;
     const on = !!done[k];
@@ -3872,14 +3946,75 @@ function stepDrops(now, dt) {
 }
 
 // ---------- the four places
-const WORLD_DIST = [17, 18, 19, 16], WORLD_YAW = [.5, 1.25, 1.25, 1.25], WORLD_FAR = [19, 26, 26, 24]; // the Throne Room is indoors: don't swing through its walls
-function buildWorld(area) { const W = [throneRoom3D, garden3D, gate3D, tower3D][area](); fxPool(W); return W; }
+const WORLD_DIST = [17, 18, 19, 16], WORLD_YAW = [.5, 1.25, 1.25, 1.25], WORLD_FAR = [19, 26, 26, 24];
+const camYaw = () => viewKingdom ? 1e9 : WORLD_YAW[viewArea], camFar = () => viewKingdom ? 70 : WORLD_FAR[viewArea], camDist = () => viewKingdom ? 46 : WORLD_DIST[viewArea]; // the Throne Room is indoors: don't swing through its walls
+function buildWorld(area) { const W = viewKingdom ? kingdom3D() : [throneRoom3D, garden3D, gate3D, tower3D][area](); fxPool(W); return W; }
+// The whole kingdom as one island: every area as a miniature diorama on its own plinth, with everything you've built.
+const KINGDOM = [{ a: 2, x: 0, z: 12.5, s: .46 }, { a: 1, x: -13, z: 0, s: .5 }, { a: 3, x: 13, z: 0, s: .52 }, { a: 0, x: 0, z: -12.5, s: .5 }];
+function kingdom3D() {
+  const hw = HALLOWEEN;
+  const W = makeWorld(hw ? { envI: .5, exposure: 1.3, bloom: [.85, .6, .6], grade: { ...NIGHT_GRADE, tilt: .3 } } : { envI: 1, exposure: 1, bloom: [.3, .4, .97], grade: { ...DAY_GRADE, tilt: .3 } }), S3 = W.scene;
+  W.kingdom = true; W.target.set(0, 1.2, 0); W.picks = [];
+  lights(W, hw ? { sky: '#5a5aa0', ground: '#101a14', hemi: .5, sun: '#9fb0ff', sunI: 1.4, sunAt: [16, 30, 14], top: '#05040f', horizon: '#3a2050', night: true, moonAt: [-.4, .45, -1], fog: '#1a1228', fogD: .009, rim: '#a08aff', rimI: .5, sb: 34 }
+    : { sky: '#cfe8ff', ground: '#4a6a30', hemi: .75, sun: '#fff0d0', sunI: 2.3, sunAt: [18, 32, 14], top: '#1f5fd0', horizon: '#a8d2ff', bottom: '#5a90c0', fog: '#b4d6f6', fogD: .006, sb: 34 });
+  // the island, its stony shore and the sea around it
+  mesh(S3, new THREE.CircleGeometry(31, 72), W.mat('kgrass', '#fff', { ...pbr('ground' + hw, [26, 26], PAINT.ground(hw ? '#203424' : '#4e9038'), 2), r: 1 }), 0, 0, 0, { rx: -Math.PI / 2, cast: false });
+  mesh(S3, CYL(31, 33, 1.6, 72), W.mat('shore', '#fff', { ...pbr('stoneK' + hw, [12, 1], PAINT.stone(hw ? '#3e3848' : '#b8a888'), 2, 256), r: .9 }), 0, -.82, 0);
+  const sea = W.mat('sea' + hw, hw ? '#0c2a30' : '#1e6aa8', { r: .04, m: .1, normalMap: pbr('water', [30, 30], PAINT.water(), 4, 256).normalMap, e: hw ? '#06201a' : '#000814', ei: 1, env: 1.6, ns: .6 });
+  mesh(S3, new THREE.CircleGeometry(200, 64), sea, 0, -1.2, 0, { rx: -Math.PI / 2, cast: false });
+  W.ticks.push(now => { sea.normalMap.offset.set(now / 60000, now / 45000); });
+  // paths from a central plaza to each area
+  const flags = W.mat('kpath', '#fff', { ...pbr('flagsK' + hw, [1, 5], PAINT.flags(hw ? '#6a6276' : '#cdbd9c', hw ? '#1e2a1e' : '#4a6a34'), 3.5), r: 1 });
+  mesh(S3, CYL(4.5, 4.7, .2, 48), flags, 0, .06, 0);
+  for (const sp of KINGDOM) { const L = Math.hypot(sp.x, sp.z) - 6.3, ang = Math.atan2(sp.x, sp.z); const path = group(S3, Math.sin(ang) * (4 + L / 2), 0, Math.cos(ang) * (4 + L / 2), ang); mesh(path, RBOX(2.6, .08, L, .02), flags, 0, .05, 0, { cast: false }); }
+  // each area on its plinth, built from the very same models as the area itself
+  for (const sp of KINGDOM) {
+    const sub = [throneRoom3D, garden3D, gate3D, tower3D][sp.a](true);
+    const root = group(S3, sp.x, 0, sp.z); root.userData.area = sp.a;
+    mesh(root, CYL(6.6, 7, 1.2, 64, true), W.mat('plinth' + hw, '#fff', { ...pbr('bricksK' + hw, [8, 1], hw ? PAINT.bricks('#4e4862', '#1e1828', 3) : PAINT.bricks('#d8c4a0', '#9a8466', 3), 3), r: 1 }), 0, -.35, 0);
+    mesh(root, new THREE.CircleGeometry(6.6, 64), W.mat('plinthTop' + hw, '#fff', { ...pbr('flagsT' + hw, [3, 3], PAINT.flags(hw ? '#5a5268' : '#d2c6aa', hw ? '#241c2c' : '#7a6a54'), 3.5), r: 1 }), 0, .25, 0, { rx: -Math.PI / 2, cast: false });
+    mesh(root, new THREE.TorusGeometry(6.65, .12, 8, 96), W.mat('kgold', '#e0b030', { m: 1, r: .25 }), 0, .26, 0, { rx: Math.PI / 2 });
+    const d = group(root, 0, sp.a === 3 ? 10 * sp.s * .95 : .28, 0); d.scale.setScalar(sp.s);
+    for (const c of [...sub.scene.children]) d.add(c);
+    d.traverse(o => { if (o.isPointLight) o.parent && (o.userData.dead = true); });
+    d.traverse(o => { if (o.userData.dead) { o.intensity = 0; o.visible = false; } }); // the miniatures glow rather than light the island (keeps it fast)
+    W.ticks.push(...sub.ticks); for (const [k, m] of Object.entries(sub.mats)) W.mats[sp.a + ':' + k] = m;
+    for (const [k, it] of sub.items) W.items.set(sp.a + ':' + k, it);
+    W.picks.push(root);
+    // a floating label with the area's name and progress
+    const cv = document.createElement('canvas'); cv.width = 512; cv.height = 150; const tex = new THREE.CanvasTexture(cv); tex.encoding = THREE.sRGBEncoding;
+    const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, toneMapped: false, depthTest: false })); label.renderOrder = 10;
+    const ly = sp.a === 3 ? 12.5 : 9; label.scale.set(11, 11 * 150 / 512, 1); label.position.set(0, ly, 0); root.add(label);
+    (W.labels = W.labels || []).push({ a: sp.a, cv, tex });
+    const ph = sp.a; W.ticks.push(now => { label.position.y = ly + Math.sin(now / 700 + ph) * .2; });
+  }
+  for (let i = 0; i < 18; i++) { const a = i / 18 * Math.PI * 2 + .2, R = 25 + (i * 7 % 4); if (KINGDOM.some(sp => Math.hypot(Math.sin(a) * R - sp.x, Math.cos(a) * R - sp.z) < 8.5)) continue; tree(W, S3, Math.sin(a) * R, Math.cos(a) * R, 1 + (i % 3) * .2); }
+  grass(W, 12000, (x, z) => Math.hypot(x, z) < 30 && Math.hypot(x, z) > 5 && !KINGDOM.some(sp => Math.hypot(x - sp.x, z - sp.z) < 7.2) && !KINGDOM.some(sp => { const ang = Math.atan2(sp.x, sp.z), along = x * Math.sin(ang) + z * Math.cos(ang), across = x * Math.cos(ang) - z * Math.sin(ang); return along > 0 && Math.abs(across) < 1.6; }), hw ? '#1a2a1a' : '#3a7a2a', hw ? '#3a5a3a' : '#8ad04a', 62);
+  motes(W, hw ? 70 : 30, 50, .5, 8);
+  flock(W, hw ? 9 : 7, 0, 14, 0, 22);
+  addHost(W, 1.6, 2.2);
+  return W;
+}
+function drawKingdomLabels() {
+  const W = W3.world; if (!W || !W.labels) return;
+  const reach = reachArea();
+  for (const L of W.labels) {
+    const A = AREAS[L.a], done = S.tasks[L.a] || [], n = A.tasks.filter((_, k) => done[k]).length, g = L.cv.getContext('2d'), w = 512, h = 150;
+    g.clearRect(0, 0, w, h); g.fillStyle = HALLOWEEN ? 'rgba(30,12,48,.82)' : 'rgba(24,30,80,.8)'; rrPath(g, 6, 6, w - 12, h - 12, 34); g.fill();
+    g.lineWidth = 5; g.strokeStyle = HALLOWEEN ? '#ff9a2e' : '#ffd34d'; g.stroke();
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#ffffff'; g.font = `bold 46px ${getComputedStyle(document.body).getPropertyValue('--display') || 'sans-serif'}, sans-serif`;
+    g.fillText(SP(A.name, A.hname), w / 2, 52);
+    g.font = 'bold 30px sans-serif'; g.fillStyle = L.a > reach ? '#c8c0d8' : n === A.tasks.length ? '#8eea7a' : '#ffe08a';
+    g.fillText(L.a > reach ? 'Locked' : n === A.tasks.length ? '★ Restored ★' : `${n} / ${A.tasks.length} built`, w / 2, 105);
+    L.tex.needsUpdate = true;
+  }
+}
 function stoneMat(W, key, hw, rep, rows = 8) { return W.mat(key, '#ffffff', { ...pbr('bricks' + hw + rows, rep, hw ? PAINT.bricks('#4e4862', '#1e1828', rows) : PAINT.bricks('#d8c4a0', '#9a8466', rows), 3.2), r: 1, ns: 1.1 }); }
 const DAY_GRADE = { sat: 1.12, contrast: 1.05, tint: [1.03, 1.01, .96], vignette: .28, tilt: .85 }, NIGHT_GRADE = { sat: 1.05, contrast: 1.1, tint: [.93, .94, 1.1], vignette: .45, tilt: .85 };
-function throneRoom3D() {
+function throneRoom3D(mini = false) {
   const hw = HALLOWEEN;
   const W = makeWorld(hw ? { envI: .45, exposure: 1.25, bloom: [.85, .55, .6], grade: { ...NIGHT_GRADE, tint: [.94, .92, 1.08] }, ao: [.035, 3, 40] }
-    : { envI: .9, exposure: .95, bloom: [.4, .4, .96], grade: { ...DAY_GRADE, sat: 1.1, tint: [1.04, 1, .95], vignette: .32 }, ao: [.035, 3, 40] }), S3 = W.scene;
+    : { envI: .9, exposure: .95, bloom: [.4, .4, .96], grade: { ...DAY_GRADE, sat: 1.1, tint: [1.04, 1, .95], vignette: .32 }, ao: [.035, 3, 40] }), S3 = W.scene; W.mini = !!mini;
   W.target.set(0, 2, -1);
   lights(W, hw ? { sky: '#6a5aa8', ground: '#1a1022', hemi: .5, sun: '#a8b8ff', sunI: 1.25, sunAt: [-7, 12, 8], top: '#120a1e', horizon: '#2a1640', night: true, moonAt: [-.3, .5, -1], fog: '#140c20', fogD: .022, room: true, rim: '#8a6aff', rimI: .45, sb: 13 }
     : { sky: '#fff4e0', ground: '#7a5a40', hemi: .7, sun: '#ffe2b0', sunI: 2.1, sunAt: [-6, 13, 9], top: '#2a2018', horizon: '#4a3a2a', room: true, rim: '#ffd8a0', rimI: .35, sb: 13 });
@@ -3899,7 +4034,7 @@ function throneRoom3D() {
     if (hw) mesh(win, new THREE.CircleGeometry(.4, 24), W.glow('moon', '#fff6d0', 3), .35, .8, .02, { cast: false });
     // volumetric shafts: crossed additive planes with soft edges, gently breathing
     const shaftMat = new THREE.MeshBasicMaterial({ map: TEX.glow(hw ? 'rgba(140,140,255,1)' : 'rgba(255,236,190,1)'), transparent: true, opacity: hw ? .12 : .22, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false });
-    const shaft = group(S3, x * .78, 2.4, -3.6); shaft.rotation.x = -.62;
+    const shaft = group(W.mini ? new THREE.Group() : S3, x * .78, 2.4, -3.6); shaft.rotation.x = -.62;
     for (const ry of [0, Math.PI / 2]) mesh(shaft, new THREE.PlaneGeometry(2.6, 10), shaftMat, 0, 0, 0, { ry, cast: false, recv: false });
     W.ticks.push(now => { shaftMat.opacity = (hw ? .1 : .2) + Math.sin(now / 1800 + x) * .03; });
   }
@@ -3959,16 +4094,16 @@ function throneRoom3D() {
   addHost(W, 3.3, 2);
   return W;
 }
-function garden3D() {
+function garden3D(mini = false) {
   const hw = HALLOWEEN;
-  const W = makeWorld(hw ? { envI: .5, exposure: 1.3, bloom: [.9, .6, .55], grade: NIGHT_GRADE, ao: [.03, 4, 50] } : { envI: 1, exposure: 1, bloom: [.3, .4, .97], grade: DAY_GRADE, ao: [.03, 4, 50] }), S3 = W.scene;
+  const W = makeWorld(hw ? { envI: .5, exposure: 1.3, bloom: [.9, .6, .55], grade: NIGHT_GRADE, ao: [.03, 4, 50] } : { envI: 1, exposure: 1, bloom: [.3, .4, .97], grade: DAY_GRADE, ao: [.03, 4, 50] }), S3 = W.scene; W.mini = !!mini;
   W.target.set(0, 1.4, -1);
   lights(W, hw ? { sky: '#5a5aa0', ground: '#101a14', hemi: .45, sun: '#9fb0ff', sunI: 1.3, sunAt: [8, 14, 6], top: '#05040f', horizon: '#3a2050', night: true, moonAt: [-.4, .45, -1], fog: '#1a1228', fogD: .028, rim: '#a08aff', rimI: .5, sb: 16 }
     : { sky: '#cfe8ff', ground: '#4a6a30', hemi: .7, sun: '#fff0d0', sunI: 2.4, sunAt: [9, 15, 7], top: '#1f5fd0', horizon: '#a8d2ff', bottom: '#8ab070', fog: '#b4d6f6', fogD: .009, sb: 16 });
-  mesh(S3, new THREE.CircleGeometry(60, 64), W.mat('grass', '#fff', { ...pbr('ground' + hw, [24, 24], PAINT.ground(hw ? '#203424' : '#4e9038'), 2), r: 1 }), 0, 0, 0, { rx: -Math.PI / 2, cast: false });
+  mesh(S3, new THREE.CircleGeometry(W.mini ? 11.5 : 60, 64), W.mat('grass', '#fff', { ...pbr('ground' + hw, [24, 24], PAINT.ground(hw ? '#203424' : '#4e9038'), 2), r: 1 }), 0, 0, 0, { rx: -Math.PI / 2, cast: false });
   mesh(S3, RBOX(2.4, .06, 10, .02), W.mat('path', '#fff', { ...pbr('flags' + hw, [1, 4], PAINT.flags(hw ? '#6a6276' : '#cdbd9c', hw ? '#1e2a1e' : '#4a6a34'), 3.5), r: 1 }), 0, .03, 3.5, { cast: false });
-  mesh(S3, RBOX(26, 1.2, .8, .08), stoneMat(W, 'gwall', hw, [8, 1], 3), 0, .6, -9.5);
-  for (let i = 0; i < 16; i++) { const a = Math.PI * (.15 + i / 15 * .7), R = 14 + (i * 7 % 5); tree(W, S3, Math.cos(a) * R * (i % 2 ? 1 : -1) * .9, -Math.sin(a) * R + 1, .9 + (i % 3) * .15); }
+  mesh(S3, RBOX(W.mini ? 21 : 26, 1.2, .8, .08), stoneMat(W, 'gwall', hw, [8, 1], 3), 0, .6, W.mini ? -9 : -9.5);
+  if (!W.mini) for (let i = 0; i < 16; i++) { const a = Math.PI * (.15 + i / 15 * .7), R = 14 + (i * 7 % 5); tree(W, S3, Math.cos(a) * R * (i % 2 ? 1 : -1) * .9, -Math.sin(a) * R + 1, .9 + (i % 3) * .15); }
   grass(W, 9000, (x, z) => Math.abs(x) > 1.5 && !(Math.abs(x) < 4 && z > -7 && z < 8) && Math.hypot(x, z + 3.2) > 3 && z > -9 && !(Math.abs(Math.abs(x) - 6.4) < 1.4 && Math.abs(z - 2) < 2.4) && Math.hypot(x + 5.8, z + 5.2) > 2.2 && Math.hypot(x - 5.4, z + 5.4) > 1.1, hw ? '#1a2a1a' : '#3a7a2a', hw ? '#3a5a3a' : '#8ad04a');
   if (!hw) motes(W, 40, 22, .5, 6, { col: 'rgba(255,170,210,1)', size: .12, op: .9, fall: .25 }); // drifting petals
   motes(W, hw ? 50 : 20, 22, .4, 5);
@@ -4031,21 +4166,21 @@ function garden3D() {
   addHost(W, .8, 5.4);
   return W;
 }
-function gate3D() {
+function gate3D(mini = false) {
   const hw = HALLOWEEN;
-  const W = makeWorld(hw ? { envI: .5, exposure: 1.3, bloom: [.9, .6, .55], grade: NIGHT_GRADE, ao: [.03, 5, 50] } : { envI: 1, exposure: 1, bloom: [.3, .4, .97], grade: DAY_GRADE, ao: [.03, 5, 50] }), S3 = W.scene;
+  const W = makeWorld(hw ? { envI: .5, exposure: 1.3, bloom: [.9, .6, .55], grade: NIGHT_GRADE, ao: [.03, 5, 50] } : { envI: 1, exposure: 1, bloom: [.3, .4, .97], grade: DAY_GRADE, ao: [.03, 5, 50] }), S3 = W.scene; W.mini = !!mini;
   W.target.set(0, 2.6, -1.5);
   lights(W, hw ? { sky: '#5a50a0', ground: '#14101a', hemi: .45, sun: '#9fb0ff', sunI: 1.3, sunAt: [-9, 16, 8], top: '#04030f', horizon: '#40204a', night: true, moonAt: [.5, .4, -1], fog: '#1a1228', fogD: .022, rim: '#a08aff', rimI: .5, sb: 18 }
     : { sky: '#d8ecff', ground: '#4a6a30', hemi: .7, sun: '#fff0d0', sunI: 2.4, sunAt: [-10, 16, 9], top: '#1f5fd0', horizon: '#a8d2ff', bottom: '#8ab070', fog: '#b4d6f6', fogD: .008, sb: 18 });
-  mesh(S3, new THREE.CircleGeometry(80, 64), W.mat('grass', '#fff', { ...pbr('ground' + hw, [30, 30], PAINT.ground(hw ? '#203424' : '#5a9a40'), 2), r: 1 }), 0, 0, 0, { rx: -Math.PI / 2, cast: false });
+  mesh(S3, new THREE.CircleGeometry(W.mini ? 13 : 80, 64), W.mat('grass', '#fff', { ...pbr('ground' + hw, [30, 30], PAINT.ground(hw ? '#203424' : '#5a9a40'), 2), r: 1 }), 0, 0, 0, { rx: -Math.PI / 2, cast: false });
   mesh(S3, RBOX(3.4, .06, 12, .02), W.mat('road', '#fff', { ...pbr('flagsR' + hw, [1, 4], PAINT.flags(hw ? '#5e5262' : '#c0a684', hw ? '#1e2a1e' : '#6a5a44'), 3.5), r: 1 }), 0, .03, 6, { cast: false });
   // the moat: a channel of rippling, reflective water
   const water = W.mat('moat' + hw, hw ? '#0c3a2a' : '#1e6aa8', { r: .03, m: .1, normalMap: pbr('water', [8, 1], PAINT.water(), 4, 256).normalMap, e: hw ? '#06301a' : '#000814', ei: 1, env: 1.6, ns: .7 });
-  mesh(S3, BOX(40, .06, 2.6), water, 0, .02, -.3, { cast: false });
-  for (const s of [-1, 1]) mesh(S3, BOX(40, .3, .25), W.mat('bank', hw ? '#2a2630' : '#8a7a62', { r: .9 }), 0, .1, -.3 + s * 1.35);
+  mesh(S3, BOX(W.mini ? 26 : 40, .06, 2.6), water, 0, .02, -.3, { cast: false });
+  for (const s of [-1, 1]) mesh(S3, BOX(W.mini ? 26 : 40, .3, .25), W.mat('bank', hw ? '#2a2630' : '#8a7a62', { r: .9 }), 0, .1, -.3 + s * 1.35);
   W.ticks.push(now => { water.normalMap.offset.set(now / 25000, now / 40000); });
-  for (let i = 0; i < 5; i++) mesh(S3, BALL(14, 24), W.mat('hill', hw ? '#141c14' : '#5a9a48', { r: 1 }), -48 + i * 24, -8, -56 - (i % 2) * 8, { s: [1.5, .9, 1], cast: false });
-  for (let i = 0; i < 10; i++) tree(W, S3, (i % 2 ? 1 : -1) * (14 + (i * 3 % 7)), -6 - (i * 5 % 11), .9 + (i % 3) * .2);
+  if (!W.mini) for (let i = 0; i < 5; i++) mesh(S3, BALL(14, 24), W.mat('hill', hw ? '#141c14' : '#5a9a48', { r: 1 }), -48 + i * 24, -8, -56 - (i % 2) * 8, { s: [1.5, .9, 1], cast: false });
+  if (!W.mini) for (let i = 0; i < 10; i++) tree(W, S3, (i % 2 ? 1 : -1) * (14 + (i * 3 % 7)), -6 - (i * 5 % 11), .9 + (i % 3) * .2);
   grass(W, 8000, (x, z) => Math.abs(x) > 2 && (z > 1.2 || z < -4.8) && !(Math.abs(Math.abs(x) - 10) < 2.6 && Math.abs(z + 3.4) < 2.6) && !(Math.abs(Math.abs(x) - 2.4) < .4 && (Math.abs(z - 3) < .4 || Math.abs(z - 7.5) < .4)), hw ? '#1a2a1a' : '#3f8a2c', hw ? '#3a5a3a' : '#9ad85a', 40);
   motes(W, hw ? 40 : 14, 26, .5, 8);
   flock(W, hw ? 7 : 6, 0, 10, -8, 12);
@@ -4097,18 +4232,18 @@ function gate3D() {
   addHost(W, 4.8, 5.4);
   return W;
 }
-function tower3D() {
+function tower3D(mini = false) {
   const hw = HALLOWEEN;
-  const W = makeWorld(hw ? { envI: .5, exposure: 1.3, bloom: [.95, .6, .55], grade: NIGHT_GRADE, ao: [.03, 3, 40] } : { envI: 1, exposure: 1, bloom: [.32, .45, .97], grade: { ...DAY_GRADE, tint: [1.04, 1.01, .95] }, ao: [.03, 3, 40] }), S3 = W.scene;
+  const W = makeWorld(hw ? { envI: .5, exposure: 1.3, bloom: [.95, .6, .55], grade: NIGHT_GRADE, ao: [.03, 3, 40] } : { envI: 1, exposure: 1, bloom: [.32, .45, .97], grade: { ...DAY_GRADE, tint: [1.04, 1.01, .95] }, ao: [.03, 3, 40] }), S3 = W.scene; W.mini = !!mini;
   W.target.set(0, 1.8, -.5);
   lights(W, hw ? { sky: '#5a50a0', ground: '#14101a', hemi: .5, sun: '#a0b4ff', sunI: 1.3, sunAt: [8, 14, 8], top: '#030212', horizon: '#3a1a48', bottom: '#120a18', night: true, moonAt: [-.4, .35, -1], fog: '#1c1430', fogD: .012, rim: '#a08aff', rimI: .55, sb: 11 }
     : { sky: '#d8ecff', ground: '#8a7a60', hemi: .75, sun: '#ffe8c0', sunI: 2.4, sunAt: [9, 12, 8], top: '#1f5fd0', horizon: '#9fcbff', bottom: '#6a9a58', fog: '#a8ccf0', fogD: .006, sb: 11 });
   mesh(S3, CYL(7.2, 7.6, 1.2, 64), W.mat('tfloor', '#fff', { ...pbr('flagsT' + hw, [3, 3], PAINT.flags(hw ? '#5a5268' : '#d2c6aa', hw ? '#241c2c' : '#7a6a54'), 3.5), r: 1 }), 0, -.6, 0);
-  mesh(S3, CYL(7.6, 6.5, 40, 64, true), stoneMat(W, 'twall', hw, [10, 8], 10), 0, -21.2, 0, { cast: false });
+  if (W.mini) mesh(S3, CYL(7.6, 7.8, 10, 64, true), stoneMat(W, 'twall', hw, [10, 2], 10), 0, -6.2, 0); else mesh(S3, CYL(7.6, 6.5, 40, 64, true), stoneMat(W, 'twall', hw, [10, 8], 10), 0, -21.2, 0, { cast: false });
   const merl = stoneMat(W, 'merlon', hw, [1, 1], 3);
   for (let i = 0; i < 26; i++) { const a = i / 26 * Math.PI * 2; if (Math.sin(a) > .55 && Math.abs(Math.cos(a)) < .5) continue; mesh(S3, RBOX(.9, .9, .6, .06), merl, Math.cos(a) * 7, .45, Math.sin(a) * 7, { ry: -a + Math.PI / 2 }); }
-  mesh(S3, new THREE.CircleGeometry(300, 48), W.mat('land', hw ? '#141a14' : '#6aa04a', { r: 1 }), 0, -40, 0, { rx: -Math.PI / 2, cast: false });
-  for (let i = 0; i < (gfxAt('medium') ? 12 : 6); i++) { // soft clouds drifting past (dark wisps at night)
+  if (!W.mini) mesh(S3, new THREE.CircleGeometry(300, 48), W.mat('land', hw ? '#141a14' : '#6aa04a', { r: 1 }), 0, -40, 0, { rx: -Math.PI / 2, cast: false });
+  for (let i = 0; i < (W.mini ? 0 : gfxAt('medium') ? 12 : 6); i++) { // soft clouds drifting past (dark wisps at night)
     const c = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.cloud(), transparent: true, opacity: hw ? .35 : .9, depthWrite: false, color: lin(hw ? '#4a3a6a' : '#ffffff'), fog: false }));
     c.scale.set(28 + Math.random() * 16, 14 + Math.random() * 6, 1); c.position.set(-80 + i * 14, -6 + Math.random() * 18, -60 - Math.random() * 30); S3.add(c);
     W.ticks.push((now, dt) => { c.position.x += dt * 1.2; if (c.position.x > 90) c.position.x = -90; });
@@ -4167,6 +4302,19 @@ function tower3D() {
   return W;
 }
 
+function drawKingdom2D() { // without 3D: the four areas side by side, with what you've built
+  const cv = $('#scene'), w = cv.clientWidth || 320, h = w * .625;
+  cv.width = Math.round(w * DPR); cv.height = Math.round(h * DPR); SS = DPR * w / 320; pendingAppear = null;
+  const bg = bake(0, 0, 320, 200, g => AREAS.forEach((A, a) => {
+    const done = S.tasks[a] || [], keys = A.tasks.map(t => t[0]), x = (a % 2) * 160, y = Math.floor(a / 2) * 100;
+    g.save(); g.beginPath(); g.rect(x + 1, y + 1, 158, 98); g.clip(); g.translate(x, y); g.scale(.5, .5);
+    SCENES[a](g, (key, fn) => { const on = done[keys.indexOf(key)]; g.save(); g.globalAlpha = on ? 1 : .2; fn(g); g.restore(); }, () => {});
+    g.restore();
+    g.fillStyle = 'rgba(0,0,0,.55)'; g.fillRect(x + 4, y + 82, 152, 14); g.fillStyle = '#ffd34d'; g.font = 'bold 9px sans-serif'; g.textBaseline = 'middle';
+    g.fillText(`${SP(A.name, A.hname)}  ${done.filter(Boolean).length}/${A.tasks.length}`, x + 8, y + 89);
+  }));
+  SCN = null; const c = cv.getContext('2d'); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, cv.width, cv.height); c.drawImage(bg.cv, 0, 0);
+}
 // The castle scene is baked once into a static layer; only the moving parts are redrawn each frame.
 let SCN = null, pendingAppear = null;
 // Where each item sits, for the dust and sparkles when it lands.
@@ -4178,6 +4326,7 @@ const ITEM_SPOTS = {
 function drawScene() {
   if (castle3D()) return;
   W3.on = false; $('#scene').hidden = false; $('#scene3d').hidden = true;
+  if (viewKingdom) { drawKingdom2D(); return; }
   const appear = pendingAppear; pendingAppear = null;
   const cv = $('#scene'), w = cv.clientWidth || 320, h = w * .625;
   cv.width = Math.round(w * DPR); cv.height = Math.round(h * DPR); SS = DPR * w / 320;
