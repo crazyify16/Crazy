@@ -282,7 +282,11 @@ let HALLOWEEN = themeIsHalloween();
 const SP = (classic, spooky) => HALLOWEEN ? spooky : classic;
 function save() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); } catch (e) { /* ignore */ } }
 const totalStars = () => Object.values(S.stars).reduce((a, b) => a + b, 0);
-const starBalance = () => totalStars() - S.spent;
+const starBalance = () => S.dev ? Infinity : totalStars() - S.spent;
+// Developer mode: unlimited stars, coins and boosters. Nothing is deducted, so the real balances come back untouched.
+const canPay = cost => S.dev || S.coins >= cost;
+const payCoins = cost => { if (!S.dev) S.coins -= cost; };
+const shown = n => n === Infinity || S.dev ? '\u221e' : n;
 
 /* =========================================================
    Audio: synthesised sound effects + a looping lute tune.
@@ -1791,8 +1795,8 @@ function buildBoosters() {
 }
 function updateBoosters() {
   document.querySelectorAll('.boost').forEach(btn => {
-    const n = S.boosters[btn.dataset.id] || 0;
-    btn.querySelector('.n').textContent = n;
+    const n = S.dev ? Infinity : S.boosters[btn.dataset.id] || 0;
+    btn.querySelector('.n').textContent = shown(n);
     btn.classList.toggle('empty', n <= 0);
     btn.classList.toggle('on', G && G.booster === btn.dataset.id);
   });
@@ -1802,7 +1806,7 @@ function updateBoosters() {
 async function onBooster(id) {
   ac();
   if (!G || G.busy || G.over) return;
-  if ((S.boosters[id] || 0) <= 0) { sfx.bad(); return; }
+  if (!S.dev && (S.boosters[id] || 0) <= 0) { sfx.bad(); return; }
   if (id === 'shuffle') {
     G.busy = true; clearHint(); S.boosters.shuffle--; save(); updateBoosters();
     await shuffleBoard(); G.busy = false; scheduleHint(); return;
@@ -1811,7 +1815,7 @@ async function onBooster(id) {
 }
 async function applyBooster(r, c) {
   const id = G.booster; G.booster = null;
-  S.boosters[id]--; save(); updateBoosters();
+  if (!S.dev) S.boosters[id]--; save(); updateBoosters();
   G.busy = true; clearHint(); G.chain = 0;
   const ctx = { seen: new Set() };
   if (id === 'hammer') { G.shake = 5; sfx.clang(); hitCell(r, c, ctx); }
@@ -2209,12 +2213,12 @@ function rescueFail() {
 function showRescueLose() {
   const goals = G.goals.filter(g => g.left > 0).map(g => ({ key: goalKey(g), n: g.left })), cost = 60;
   const card = modal(`<h3>Oh no!</h3><p>The ${SP('drills', 'spikes')} got ${SP('the King', 'the Count')}! Open a path to the bottom faster so the rubble pours out.</p>${goalIconsHtml(goals)}
-    <div class="row"><button class="btn blue" data-a="more" ${S.coins < cost ? 'disabled' : ''}>+20 seconds · ${cost} coins</button></div>
+    <div class="row"><button class="btn blue" data-a="more" ${canPay(cost) ? '' : 'disabled'}>+20 seconds · ${cost} coins</button></div>
     <div class="row"><button class="btn ghost" data-a="map">Map</button><button class="btn green" data-a="retry">Retry</button></div>`);
   fillGoalIcons(card, goals);
   card.querySelector('[data-a=more]').onclick = () => {
-    if (S.coins < cost) return;
-    S.coins -= cost; save(); sfx.coin(); G.tLeft += 20; G.over = false; G.busy = false; G.peril.state = 'danger';
+    if (!canPay(cost)) return;
+    payCoins(cost); save(); sfx.coin(); G.tLeft += 20; G.over = false; G.busy = false; G.peril.state = 'danger';
     updateHud(); closeModal(); scheduleHint(); KING.until = 0;
   };
   card.querySelector('[data-a=map]').onclick = () => { closeModal(); toMap(); };
@@ -2986,10 +2990,10 @@ function showLose() {
   const goals = G.goals.filter(g => g.left > 0).map(g => ({ key: goalKey(g), n: g.left }));
   const cost = 60;
   const card = modal(`<h3>Out of moves</h3><p>Still needed:</p>${goalIconsHtml(goals)}
-    <div class="row"><button class="btn blue" data-a="more" ${S.coins < cost ? 'disabled' : ''}>+5 moves · ${cost} coins</button></div>
+    <div class="row"><button class="btn blue" data-a="more" ${canPay(cost) ? '' : 'disabled'}>+5 moves · ${cost} coins</button></div>
     <div class="row"><button class="btn ghost" data-a="map">Map</button><button class="btn green" data-a="retry">Retry</button></div>`);
   fillGoalIcons(card, goals);
-  card.querySelector('[data-a=more]').onclick = () => { if (S.coins < cost) return; S.coins -= cost; save(); sfx.coin(); G.moves += 5; G.over = false; updateHud(); closeModal(); scheduleHint(); KING.until = 0; kingSay('Five more moves! We can do this!', 'happy', 2000, 1); };
+  card.querySelector('[data-a=more]').onclick = () => { if (!canPay(cost)) return; payCoins(cost); save(); sfx.coin(); G.moves += 5; G.over = false; updateHud(); closeModal(); scheduleHint(); KING.until = 0; kingSay('Five more moves! We can do this!', 'happy', 2000, 1); };
   card.querySelector('[data-a=map]').onclick = () => { closeModal(); toMap(); };
   card.querySelector('[data-a=retry]').onclick = () => { closeModal(); startLevel(G.n); };
 }
@@ -3003,7 +3007,7 @@ function toMap() { clearHint(); G = null; flyers.length = 0; show('map'); buildM
 
 function buildMap() {
   if ($('#map').hidden) return;
-  $('#starCount').textContent = starBalance(); $('#coinCount').textContent = S.coins;
+  $('#starCount').textContent = shown(starBalance()); $('#coinCount').textContent = shown(S.coins);
   $('#playBtn').textContent = 'Level ' + S.unlocked;
   const scroll = $('#mapScroll'), inner = $('#mapInner'), W = scroll.clientWidth, gap = 92;
   const H = LEVEL_COUNT * gap + 80; inner.style.height = H + 'px';
@@ -3118,7 +3122,7 @@ function openSound() {
     <div class="row"><button class="btn ${S.sfx ? 'green' : 'ghost'}" data-a="sfx">${label(S.sfx, 'Sound effects')}</button></div>
     <div class="row"><button class="btn ${HALLOWEEN ? 'green' : 'ghost'}" data-a="theme">${label(HALLOWEEN, 'Halloween theme')}</button></div>
     <div class="row"><button class="btn ${S.dev ? 'blue' : 'ghost'}" data-a="dev">${label(S.dev, 'Developer mode')}</button></div>
-    ${S.dev ? `<p class="devnote">Tap any level on the map to test it. Levels past your progress don\u2019t unlock anything or add stars.</p>
+    ${S.dev ? `<p class="devnote">Tap any level on the map to test it. Stars, coins and boosters are unlimited (your real ones come back when you turn this off). Levels past your progress don\u2019t unlock anything or add stars.</p>
     <div class="row devjump"><input type="number" min="1" max="${LEVEL_COUNT}" value="${S.unlocked}" aria-label="Level number"><button class="btn green" data-a="go">Play level</button></div>` : ''}
     <div class="row"><button class="btn" data-a="done">Done</button></div>`);
   card.querySelector('[data-a=dev]').onclick = () => { S.dev = !S.dev; save(); buildMap(); openSound(); };
@@ -3153,7 +3157,7 @@ let viewArea = 0;
 function openCastle() { viewArea = currentArea(); show('castle'); renderCastle(); }
 function renderCastle() {
   const A = AREAS[viewArea], done = S.tasks[viewArea] || [];
-  $('#areaName').textContent = SP(A.name, A.hname); $('#starCount2').textContent = starBalance();
+  $('#areaName').textContent = SP(A.name, A.hname); $('#starCount2').textContent = shown(starBalance());
   $('#areaProg').style.width = (done.filter(Boolean).length / A.tasks.length * 100) + '%';
   const list = $('#tasks'); list.innerHTML = '';
   A.tasks.forEach(([key, label, cost], k) => {
@@ -3162,7 +3166,7 @@ function renderCastle() {
     const b = row.querySelector('button');
     if (b) b.onclick = () => {
       if (starBalance() < cost) return;
-      S.spent += cost; S.tasks[viewArea] = S.tasks[viewArea] || []; S.tasks[viewArea][k] = true; pendingAppear = key;
+      if (!S.dev) S.spent += cost; S.tasks[viewArea] = S.tasks[viewArea] || []; S.tasks[viewArea][k] = true; pendingAppear = key;
       if (areaDone(viewArea)) {
         S.coins += 150; for (const id of Object.keys(S.boosters)) S.boosters[id]++;
         save(); renderCastle();
