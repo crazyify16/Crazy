@@ -63,6 +63,8 @@ if frames run slow, remembering it for next time. Without WebGL or the library t
 Four areas (Throne Room, Royal Garden, Castle Gate, Royal Tower; Haunted Hall, Moonlit Garden, Crypt Gate and
 Bat Belfry on Halloween) with six upgrades each, built in `throneRoom3D()`, `garden3D()`, `gate3D()`, `tower3D()`.
 Unbuilt upgrades show as glowing blueprints; building one drops it in with a flash, a shockwave, dust and sparkles.
+The King (or the Count on Halloween) is a real 3D character in every area (`addHost()`): posable arms for each mood
+(`HOST_POSES`), blinking, breathing, real shadows, and he turns to face the camera.
 The arrows on the castle view step between every area you've reached, so you can revisit what you built. The Kingdom map
 (`kingdom3D()`) shows the whole island: each area as a miniature diorama on its own plinth, made from the same models
 (built in a light "mini" mode), with floating progress labels; tap one to fly into it. Below it is a checklist of every upgrade.
