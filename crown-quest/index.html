@@ -572,15 +572,15 @@ function genLevel(n) {
   return { m, k, g, L: L.map(r => r.join('')) };
 }
 // Move counts come from 50 bot playthroughs per level (see crown-quest/tools/calibrate.cjs):
-// tutorial levels are near-certain wins, normal levels ease from ~88% to ~75% bot win rate,
-// and every 5th level from 10 on is a Hard level at ~50%.
+// tutorial levels are near-certain wins, normal levels ease from ~92% to ~82% bot win rate,
+// and every 5th level from 10 on is a Hard level at ~65%: tough, but fair. (Rescue levels ignore this table.)
 const MOVES = [
-  15, 18, 17, 18, 23, 23, 33, 32, 28, 30,
-  20, 15, 22, 28, 20, 28, 18, 29, 28, 15,
-  20, 24, 29, 22, 22, 30, 27, 30, 26, 16,
-  25, 27, 33, 30, 17, 41, 31, 30, 35, 25,
-  28, 33, 39, 29, 26, 28, 27, 33, 33, 24,
-  42, 32, 30, 27, 26, 44, 31, 40, 31, 28,
+  15, 18, 17, 18, 23, 23, 35, 39, 28, 31,
+  18, 15, 20, 28, 21, 29, 18, 27, 30, 13,
+  19, 24, 27, 22, 25, 30, 28, 31, 26, 17,
+  25, 34, 31, 30, 20, 44, 34, 30, 36, 30,
+  28, 37, 40, 29, 33, 33, 30, 33, 31, 27,
+  42, 32, 30, 30, 25, 44, 34, 43, 31, 33,
 ];
 const isHard = n => n >= 10 && n % 5 === 0;
 // Rescue levels: rubble pours toward the King; break every rubble block on the board before time runs out.
@@ -609,7 +609,7 @@ const RESCUE = [
 const isRescue = n => RESCUE_LEVELS.includes(n);
 function genRescue(n) {
   const R = RESCUE[RESCUE_LEVELS.indexOf(n)];
-  return { m: 9999, k: n < 20 ? 4 : 5, g: [], L: R.L, rescue: { time: R.t, shafts: R.s, h: R.h, need: R.need } };
+  return { m: 9999, k: 4, g: [], L: R.L, rescue: { time: R.t, shafts: R.s, h: R.h, need: R.need } };
 }
 function getLevel(n) {
   if (isRescue(n)) return { ...genRescue(n), hard: false }; const def = n <= HAND.length ? HAND[n - 1] : genLevel(n); return { ...def, m: MOVES[n - 1] || def.m, hard: isHard(n) }; }
@@ -1721,8 +1721,33 @@ async function endTurn() {
   updateHud();
   if (goalsDone()) { await winFlow(); return; }
   if (G.moves <= 0) { await delay(400); G.over = true; G.busy = false; sfx.lose(); kingSay(SP('Oh no\u2026 we were so close!', 'Curses\u2026 we were so close!'), 'sad', 1e9, 3); showLose(); return; }
-  if (!findMove()) await shuffleBoard();
+  if (!findMove() && !nudgeMove()) { if (!giftBomb()) await shuffleBoard(); }
   G.busy = false; scheduleHint();
+}
+// Only a handful of pieces left (a drained rescue board) and none can match: a shuffle can't help, so one of
+// them simply turns into a TNT to keep things going.
+function giftBomb() {
+  const cells = [];
+  for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) { const cell = G.grid[r][c]; if (cell.tile && !cell.tile.sp && !cell.b && !cell.ice) cells.push([r, c]); }
+  if (!cells.length || cells.length > 9) return false;
+  const [r, c] = cells[Math.floor(Math.random() * cells.length)], t = G.grid[r][c].tile;
+  t.sp = 'tnt'; t.k = -1; t.s = .3; t.flash = 1; tween(t, { s: 1 }, 260, easeBack); tween(t, { flash: 0 }, 400); G.fx.push(raysFx(r, c)); sfx.special();
+  return true;
+}
+// Out of moves? First try quietly recolouring one piece so a move exists (with a little sparkle), rather than
+// shuffling the whole board. Sparse boards (rescue levels never refill) would otherwise shuffle after every move.
+function nudgeMove() {
+  const opts = [];
+  for (let r = 0; r < G.rows; r++) for (let c = 0; c < G.cols; c++) {
+    const cell = G.grid[r][c], t = cell.tile; if (!t || t.sp || cell.b || cell.ice) continue;
+    const k0 = t.k;
+    for (let k = 0; k < G.def.k; k++) { if (k === k0) continue; t.k = k; if (!findMatches().length && findMove()) opts.push([t, k, r, c]); }
+    t.k = k0;
+  }
+  if (!opts.length) return false;
+  const [t, k, r, c] = opts[Math.floor(Math.random() * opts.length)];
+  t.k = k; t.flash = 1; tween(t, { flash: 0 }, 500); kick(t, 0, -2, 3); burst(r, c, '#fff3a6', 8, 'star');
+  return true;
 }
 async function shuffleBoard() {
   banner('Shuffle!'); sfx.shuffle(); await delay(400);
@@ -2786,6 +2811,14 @@ function renderBoard(now, dt) {
   }
   for (const d of G.dyingB) { const s = cs * .98 * d.s; g.save(); g.globalAlpha = Math.max(0, d.a); g.translate(px(d.c), py(d.r)); g.rotate(d.rot || 0); g.drawImage(sprite(d.b.t + '1'), -s / 2, -s / 2, s, s); g.restore(); }
   const dts = dt / 1000;
+  if (G.hint && !G.busy) { // hint glow: bright on the two pieces to swap, softer on the ones they'd match with
+    const fade = Math.min(1, (now - (G.hintT0 || now)) / 300), pulse = .55 + Math.sin(now / 170) * .45, gold = SP('255,214,80', '190,120,255');
+    const glow = (r, c, a, wid) => { const x = G.ox + c * cs + 3, y = G.oy + r * cs + 3, w = cs - 6;
+      g.save(); g.shadowColor = `rgba(${gold},${a})`; g.shadowBlur = cs * .35; g.fillStyle = `rgba(${gold},${a * .35})`; rr(g, x, y, w, w, cs * .18); g.fill();
+      g.lineWidth = wid; g.strokeStyle = `rgba(255,255,255,${a})`; g.stroke(); g.restore(); };
+    for (const [r, c] of G.hintCells || []) if (!G.hint.some(([y, x]) => y === r && x === c)) glow(r, c, .5 * pulse * fade, 2);
+    for (const [r, c] of G.hint) glow(r, c, (.6 + .4 * pulse) * fade, 3.5);
+  }
   if (G.hint && !G.busy && now > (G.hintNext || 0)) {
     // hint: the two pieces hop toward each other
     const [a, b] = G.hint, ta = G.grid[a[0]][a[1]].tile, tb = b && G.grid[b[0]][b[1]].tile;
@@ -2910,8 +2943,17 @@ function updateHud() {
 
 /* ---------- hints ---------- */
 let hintTimer = 0;
-function clearHint() { clearTimeout(hintTimer); if (G) G.hint = null; }
-function scheduleHint() { clearHint(); hintTimer = setTimeout(() => { if (G && !G.busy && !G.over) G.hint = findMove(); }, 5000); }
+function clearHint() { clearTimeout(hintTimer); if (G) { G.hint = null; G.hintCells = null; } }
+function scheduleHint() { clearHint(); hintTimer = setTimeout(() => { if (G && !G.busy && !G.over) { G.hint = findMove(); G.hintCells = hintCells(G.hint); G.hintT0 = performance.now(); } }, 5000); }
+function hintCells(h) { // the pieces the hinted swap would line up
+  if (!h || !h[1]) return [];
+  const [[r1, c1], [r2, c2]] = h, A = G.grid[r1][c1], B = G.grid[r2][c2], out = [];
+  [A.tile, B.tile] = [B.tile, A.tile];
+  for (const g of findMatches()) { const cells = [...g.cells.values()]; if (cells.some(([y, x]) => (y === r1 && x === c1) || (y === r2 && x === c2))) out.push(...cells); }
+  [A.tile, B.tile] = [B.tile, A.tile];
+  // positions are after the swap: map them back to where those pieces sit now
+  return out.map(([y, x]) => y === r1 && x === c1 ? [r2, c2] : y === r2 && x === c2 ? [r1, c1] : [y, x]);
+}
 
 /* ---------- input ---------- */
 let drag = null;

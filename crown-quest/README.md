@@ -42,8 +42,8 @@ node crown-quest/tools/calibrate.cjs crown-quest/index.html 50 0     # win rate 
 node crown-quest/tools/calibrate.cjs crown-quest/index.html 40 150 5,13,22   # just these levels
 ```
 
-Current targets: tutorial levels are near-certain wins, normal levels ease from ~88% to ~75% bot win
-rate, and Hard levels sit around 50–75%. Re-run it after changing any level layout or goal.
+Current targets: tutorial levels are near-certain wins, normal levels ease from ~92% to ~82% bot win
+rate, and Hard levels sit around 65% (tough but fair; every one is beatable). Re-run it after changing any level layout or goal.
 
 ## Developer mode
 
