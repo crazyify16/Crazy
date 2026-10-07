@@ -67,6 +67,11 @@ The arrows on the castle view step between every area you've reached, so you can
 (`kingdom3D()`) shows the whole island: each area as a miniature diorama on its own plinth, made from the same models
 (built in a light "mini" mode), with floating progress labels; tap one to fly into it. Below it is a checklist of every upgrade.
 
+## Start over
+
+Settings > Start over (with a confirmation) wipes levels, stars, coins, power-ups and the castle for a fresh game,
+keeping sound, theme and graphics settings and switching developer mode off.
+
 ## Developer mode
 
 Settings → Developer mode: On makes every level on the map tappable (locked ones get a dashed outline) and adds a "Play level" box to jump straight to any level number. Stars, coins and boosters are unlimited (shown as ∞) and nothing is deducted, so your real balances come back when you turn it off. Castle items you build in developer mode stay built. Winning a level past your real progress doesn't unlock the next one or add stars. Turn it off to hide it again.
