@@ -89,6 +89,9 @@ button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
 }
 .node.done { background: radial-gradient(ellipse 60% 34% at 45% 22%, rgba(255,255,255,.7), rgba(255,255,255,0) 100%), radial-gradient(circle at 35% 30%, #fff09a, #e79a12 70%); box-shadow: 0 0 0 3px #5a2b00, 0 6px 0 #5a2b00, 0 10px 16px rgba(0,0,0,.45), inset 0 -5px 0 rgba(0,0,0,.15); color: #fff; -webkit-text-stroke: 3px #5a2b00; }
 .node.locked { background: radial-gradient(ellipse 60% 34% at 45% 22%, rgba(255,255,255,.3), rgba(255,255,255,0) 100%), radial-gradient(circle at 35% 30%, #a3a8c0, #555a73 70%); box-shadow: 0 0 0 3px #262a3a, 0 6px 0 #262a3a, 0 8px 12px rgba(0,0,0,.35); color: #c9cde0; -webkit-text-stroke: 3px #262a3a; cursor: default; }
+.devnote { font-size: 13px; opacity: .8; margin: 4px 0 8px; }
+.devjump input { width: 84px; font: inherit; font-size: 18px; text-align: center; border-radius: 12px; border: 2px solid rgba(255,255,255,.35); background: rgba(0,0,0,.25); color: #fff; padding: 8px; }
+.node.locked.dev { cursor: pointer; opacity: .8; outline: 2px dashed rgba(255,255,255,.55); outline-offset: 3px; }
 .node.current { animation: bob 1.2s ease-in-out infinite; z-index: 2; }
 .node.current::after { content: ''; position: absolute; inset: -9px; border-radius: 50%; border: 3px solid var(--gold); opacity: .8; }
 .node.hard:not(.locked):not(.done) { background: radial-gradient(ellipse 60% 34% at 45% 22%, rgba(255,255,255,.65), rgba(255,255,255,0) 100%), radial-gradient(circle at 35% 30%, #ff8a93, #b3121f 70%); box-shadow: 0 0 0 3px #4a0410, 0 6px 0 #4a0410, 0 10px 16px rgba(0,0,0,.45), inset 0 -5px 0 rgba(0,0,0,.18); -webkit-text-stroke: 3px #4a0410; }
@@ -1759,9 +1762,9 @@ async function winFlow() {
     }
   }
   const coins = rescue ? 30 + Math.round(G.tLeft) : (15 + left * 4) * (G.def.hard ? 2 : 1);
-  const firstClear = !S.stars[G.n];
-  S.stars[G.n] = Math.max(S.stars[G.n] || 0, stars);
-  if (G.n >= S.unlocked) S.unlocked = Math.min(LEVEL_COUNT, G.n + 1);
+  const firstClear = !S.stars[G.n], devAhead = G.n > S.unlocked; // a developer test run of a level you haven't reached
+  if (!devAhead) S.stars[G.n] = Math.max(S.stars[G.n] || 0, stars);
+  if (G.n === S.unlocked) S.unlocked = Math.min(LEVEL_COUNT, G.n + 1);
   S.coins += coins; save();
   G.busy = false;
   showWin(stars, coins, firstClear);
@@ -3016,7 +3019,8 @@ function buildMap() {
     b.style.left = x + 'px'; b.style.top = y + 'px'; b.textContent = i;
     b.setAttribute('aria-label', `Level ${i}${isHard(i) ? ', hard level' : ''}${isRescue(i) ? ', rescue level' : ''}${locked ? ', locked' : st ? `, ${st} stars` : ''}`);
     if (st) { const s = document.createElement('span'); s.className = 'stars'; s.innerHTML = [1, 2, 3].map(k => `<i class="${k <= st ? 'on' : ''}"></i>`).join(''); b.appendChild(s); }
-    if (!locked) b.onclick = () => openLevel(i);
+    if (locked && S.dev) b.classList.add('dev');
+    if (!locked || S.dev) b.onclick = () => openLevel(i); // developer mode: any level, for testing
     inner.appendChild(b);
   }
   const svg = $('#mapPath'); svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
@@ -3113,7 +3117,13 @@ function openSound() {
     <div class="row"><button class="btn ${S.music ? 'green' : 'ghost'}" data-a="music">${label(S.music, 'Music')}</button></div>
     <div class="row"><button class="btn ${S.sfx ? 'green' : 'ghost'}" data-a="sfx">${label(S.sfx, 'Sound effects')}</button></div>
     <div class="row"><button class="btn ${HALLOWEEN ? 'green' : 'ghost'}" data-a="theme">${label(HALLOWEEN, 'Halloween theme')}</button></div>
+    <div class="row"><button class="btn ${S.dev ? 'blue' : 'ghost'}" data-a="dev">${label(S.dev, 'Developer mode')}</button></div>
+    ${S.dev ? `<p class="devnote">Tap any level on the map to test it. Levels past your progress don\u2019t unlock anything or add stars.</p>
+    <div class="row devjump"><input type="number" min="1" max="${LEVEL_COUNT}" value="${S.unlocked}" aria-label="Level number"><button class="btn green" data-a="go">Play level</button></div>` : ''}
     <div class="row"><button class="btn" data-a="done">Done</button></div>`);
+  card.querySelector('[data-a=dev]').onclick = () => { S.dev = !S.dev; save(); buildMap(); openSound(); };
+  const go = card.querySelector('[data-a=go]');
+  if (go) go.onclick = () => { const n = Math.max(1, Math.min(LEVEL_COUNT, Math.round(+card.querySelector('.devjump input').value) || 1)); closeModal(); openLevel(n); };
   card.querySelector('[data-a=theme]').onclick = () => { S.theme = HALLOWEEN ? 'classic' : 'halloween'; save(); applyTheme(); openSound(); };
   card.querySelector('[data-a=music]').onclick = () => { S.music = !S.music; save(); if (S.music) startMusic(); else stopMusic(); openSound(); };
   card.querySelector('[data-a=sfx]').onclick = () => { S.sfx = !S.sfx; save(); if (S.sfx) sfx.coin(); openSound(); };
