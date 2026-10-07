@@ -16,7 +16,7 @@ Open `index.html` in any browser, or serve the folder (`npx serve crown-quest`) 
 - Hard levels every 5th level from 10 on (red on the map, double coins)
 - Rescue levels (14 of them: 5, 12, 17, 22, 26, 31, 34, 38, 41, 44, 48, 53, 56, 59, teal on the map): drills (spikes on Halloween) close in on the King (or the Count) against a clock. One or two shafts above the board pour an endless stream of loose stone rubble, and the board never refills. Clear pieces to open paths to the bottom: every stone is a physics particle that tumbles through the holes and out of the bottom of the board. Drain the target number of stones to save him. Crates, stones, cobwebs and holes stand in the rubble's way (they aren't goals here). Layouts, targets and timers live in `RESCUE`
 - King's Bonus: leftover moves become rockets when you win
-- Level map, coins, boosters (hammer, arrow, cannon, shuffle), +5 moves on a loss
+- Level map, coins, boosters (hammer, arrow, cannon, orb (tap a piece to clear every piece of that kind), shuffle), +5 moves on a loss
 - Castle meta: spend stars to rebuild the Throne Room, Royal Garden and Castle Gate; scenes are animated and new items drop in with dust and sparkles
 - Sound: synthesised effects for every action, a looping lute-and-drum tune, and separate Music / Sound effects switches (Sound button on the map). Works with the iPhone silent switch on.
 - Halloween theme: switches on automatically in October (toggle in Settings). Bats, ghosts, jack-o'-lanterns, slimes and witch hats; tombstones and cobwebs; a graveyard map; an organ tune; and Count Dracula (public domain, Bram Stoker 1897) as host

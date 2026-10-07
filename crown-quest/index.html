@@ -272,9 +272,10 @@ const DPR = Math.min(window.devicePixelRatio || 1, 2.5);
    Save data
    ========================================================= */
 const SAVE_KEY = 'crown-quest-save-v1';
-const DEFAULT_SAVE = { unlocked: 1, stars: {}, coins: 120, spent: 0, tasks: [[], [], []], boosters: { hammer: 3, arrow: 2, cannon: 2, shuffle: 2 }, muted: false };
+const DEFAULT_SAVE = { unlocked: 1, stars: {}, coins: 120, spent: 0, tasks: [[], [], []], boosters: { hammer: 3, arrow: 2, cannon: 2, orb: 1, shuffle: 2 }, muted: false };
 let S = JSON.parse(JSON.stringify(DEFAULT_SAVE));
 try { const raw = localStorage.getItem(SAVE_KEY); if (raw) S = Object.assign(S, JSON.parse(raw)); } catch (e) { /* storage unavailable */ }
+if (S.boosters.orb === undefined) S.boosters.orb = 1; // saves from before the orb power-up get one to try
 // Seasonal theme: Halloween turns itself on in October; Settings can force it on or off.
 const isOctober = () => new Date().getMonth() === 9;
 const themeIsHalloween = () => S.theme === 'halloween' || (S.theme !== 'classic' && isOctober());
@@ -1779,6 +1780,7 @@ const BOOSTERS = [
   { id: 'hammer', name: 'Hammer', tip: 'Tap any tile or obstacle to smash it' },
   { id: 'arrow', name: 'Arrow', tip: 'Tap a row to clear it' },
   { id: 'cannon', name: 'Cannon', tip: 'Tap a column to clear it' },
+  { id: 'orb', icon: 'ball', name: 'Orb', get tip() { return SP('Tap a piece to clear every piece of that kind', 'Tap a piece: the crystal ball zaps every one like it'); } },
   { id: 'shuffle', name: 'Shuffle', tip: '' },
 ];
 function buildBoosters() {
@@ -1787,7 +1789,7 @@ function buildBoosters() {
     const btn = document.createElement('button');
     btn.className = 'panel boost'; btn.dataset.id = b.id; btn.setAttribute('aria-label', b.name);
     btn.innerHTML = `<canvas width="80" height="80"></canvas><span class="n"></span>`;
-    drawIcon(btn.querySelector('canvas'), b.id);
+    drawIcon(btn.querySelector('canvas'), b.icon || b.id);
     btn.addEventListener('click', () => onBooster(b.id));
     el.appendChild(btn);
   }
@@ -1814,11 +1816,15 @@ async function onBooster(id) {
   G.booster = G.booster === id ? null : id; G.sel = null; updateBoosters();
 }
 async function applyBooster(r, c) {
-  const id = G.booster; G.booster = null;
+  const id = G.booster;
+  const k = id === 'orb' ? kindAt(r, c) : 0;
+  if (id === 'orb' && (k == null || k < 0)) { sfx.bad(); kingSay(SP('Tap a regular piece to pick which kind to clear.', 'Tap a regular piece to choose what the crystal ball zaps.'), 'worried', 1800, 1); return; } // keep it armed
+  G.booster = null;
   if (!S.dev) S.boosters[id]--; save(); updateBoosters();
   G.busy = true; clearHint(); G.chain = 0;
   const ctx = { seen: new Set() };
   if (id === 'hammer') { G.shake = 5; sfx.clang(); hitCell(r, c, ctx); }
+  else if (id === 'orb') { G.shake = 4; await lightBall(r, c, k, ctx); }
   else { hitCell(r, c, ctx); await rocketLine(r, c, id === 'arrow' ? 'h' : 'v', ctx); }
   await flush(); await cascade(); await endTurn();
 }
