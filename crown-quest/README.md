@@ -47,11 +47,22 @@ rate, and Hard levels ~85%. Re-run it after changing any level layout or goal.
 
 ## The castle in 3D
 
-The castle screen is a real 3D world made with three.js (loaded from cdnjs). Drag to look around; pinch or scroll to zoom.
-There are four areas (Throne Room, Royal Garden, Castle Gate, Royal Tower; Haunted Hall, Moonlit Garden, Crypt Gate and Bat Belfry on Halloween)
-with six upgrades each. Unbuilt upgrades show as glowing blueprints; building one drops the model in with dust and sparkles.
-Each area is built in `throneRoom3D()`, `garden3D()`, `gate3D()` and `tower3D()`; costs and names are in `AREAS`.
-If WebGL or the library isn't available (offline), the painted 2D castle is shown instead.
+The castle screen is a real 3D world made with three.js r128 (core from cdnjs, post-processing add-ons from jsDelivr).
+Drag to look around (with momentum), pinch or scroll to zoom; each area opens with a camera fly-in.
+
+Rendering: HDR scene with 4x MSAA, ambient occlusion (SAO, Ultra only), bloom, ACES tone mapping and a final grade
+(saturation, contrast, tint, tilt-shift focus, vignette, film grain). Image-based reflections come from a
+prefiltered environment (the sky, or a studio room indoors). Surfaces use PBR textures painted in code
+(albedo + normal map from a height map + roughness): bricks, marble, planks, flagstones, ground, water ripples.
+Bevelled blocks, soft shadows, wind-blown instanced grass, swaying trees, rippling water, embers, birds and bats,
+petals, light shafts and a custom sky shader (sun glow by day; stars and a haloed moon at night).
+
+Quality: Settings > Graphics (Auto, Ultra, High, Medium, Low). Auto picks from the device and steps down by itself
+if frames run slow, remembering it for next time. Without WebGL or the library the painted 2D castle is shown.
+
+Four areas (Throne Room, Royal Garden, Castle Gate, Royal Tower; Haunted Hall, Moonlit Garden, Crypt Gate and
+Bat Belfry on Halloween) with six upgrades each, built in `throneRoom3D()`, `garden3D()`, `gate3D()`, `tower3D()`.
+Unbuilt upgrades show as glowing blueprints; building one drops it in with a flash, a shockwave, dust and sparkles.
 
 ## Developer mode
 
