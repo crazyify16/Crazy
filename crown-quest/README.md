@@ -70,7 +70,7 @@ The arrows on the castle view step between every area you've reached, so you can
 ## Start over
 
 Settings > Start over (with a confirmation) wipes levels, stars, coins, power-ups and the castle for a fresh game,
-keeping sound, theme and graphics settings and switching developer mode off.
+keeping sound, theme and graphics settings and switching developer mode off. A fresh game starts with 0 coins.
 
 ## Developer mode
 

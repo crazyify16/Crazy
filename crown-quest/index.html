@@ -300,7 +300,7 @@ const DPR = Math.min(window.devicePixelRatio || 1, 2.5);
    Save data
    ========================================================= */
 const SAVE_KEY = 'crown-quest-save-v1';
-const DEFAULT_SAVE = { unlocked: 1, stars: {}, coins: 120, spent: 0, tasks: [[], [], [], []], boosters: { hammer: 3, arrow: 2, cannon: 2, orb: 1, shuffle: 2 }, muted: false };
+const DEFAULT_SAVE = { unlocked: 1, stars: {}, coins: 0, spent: 0, tasks: [[], [], [], []], boosters: { hammer: 3, arrow: 2, cannon: 2, orb: 1, shuffle: 2 }, muted: false };
 let S = JSON.parse(JSON.stringify(DEFAULT_SAVE));
 try { const raw = localStorage.getItem(SAVE_KEY); if (raw) S = Object.assign(S, JSON.parse(raw)); } catch (e) { /* storage unavailable */ }
 if (S.boosters.orb === undefined) S.boosters.orb = 1; // saves from before the orb power-up get one to try
