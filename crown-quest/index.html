@@ -3318,7 +3318,7 @@ const THREE_URL = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.mi
 const THREE_EX = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/';
 const THREE_EX_FILES = ['shaders/CopyShader.js', 'shaders/LuminosityHighPassShader.js', 'postprocessing/EffectComposer.js', 'postprocessing/RenderPass.js',
   'postprocessing/ShaderPass.js', 'postprocessing/UnrealBloomPass.js', 'shaders/SAOShader.js', 'shaders/DepthLimitedBlurShader.js', 'shaders/UnpackDepthRGBAShader.js',
-  'postprocessing/SAOPass.js', 'geometries/RoundedBoxGeometry.js', 'environments/RoomEnvironment.js'];
+  'postprocessing/SAOPass.js', 'geometries/RoundedBoxGeometry.js', 'environments/RoomEnvironment.js', 'loaders/GLTFLoader.js', 'utils/SkeletonUtils.js'];
 const W3 = { on: false, failed: false, ready: false, r: null, key: '', world: null, post: null, ptrs: new Map(), focus: null, last: 0,
   yaw: .35, pitch: .36, dist: 17, yawT: .35, pitchT: .36, distT: 17, vYaw: 0, user: -1e9, intro: 0 };
 let threeLoading = null;
@@ -3328,6 +3328,7 @@ function load3D() {
   return (threeLoading = (async () => {
     if (!window.THREE && !(await loadScript(THREE_URL))) return false;
     for (const f of THREE_EX_FILES) await loadScript(THREE_EX + f); // extras: the castle still works if any of these fail
+    if (window.THREE && HALLOWEEN) loadCountModel();
     return !!window.THREE;
   })());
 }
@@ -3497,7 +3498,7 @@ function buildPipeline() {
 }
 function disposeWorld() {
   if (!W3.world) return;
-  W3.world.scene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) [].concat(o.material).forEach(m => { for (const k of ['map', 'normalMap', 'roughnessMap']) if (m[k]) m[k].dispose(); m.dispose(); }); });
+  W3.world.scene.traverse(o => { if (o.geometry && !SHARED3D.has(o.geometry)) o.geometry.dispose(); if (o.material) [].concat(o.material).forEach(m => { for (const k of ['map', 'normalMap', 'roughnessMap']) if (m[k] && !SHARED3D.has(m[k])) m[k].dispose(); m.dispose(); }); }); // the rigged Count's mesh and texture are shared
   for (const m of Object.values(W3.world.mats)) m.dispose();
   if (W3.world.envRT) W3.world.envRT.dispose();
   DROPS.length = 0;
@@ -3506,7 +3507,7 @@ function disposeWorld() {
 // ---------- the render loop (called from the game's frame loop while the castle is showing)
 function render3D(now) {
   const Wd = W3.world; if (!Wd) return;
-  const dt = Math.min(.05, (now - (W3.last || now)) / 1000); W3.last = now;
+  const dt = Math.max(0, Math.min(.05, (now - (W3.last || now)) / 1000)); W3.last = Math.max(now, W3.last || 0); // a direct draw can run ahead of the frame loop's timestamp: never step backwards
   // camera: smooth follow with momentum, a gentle sway when idle, and a fly-in when the area opens
   if (!W3.ptrs.size && Math.abs(W3.vYaw) > .0001) { const ym = camYaw(); W3.yawT = Math.max(-ym, Math.min(ym, W3.yawT + W3.vYaw)); W3.vYaw *= Math.pow(.04, dt); }
   if (viewKingdom) { if (!REDUCED && now - W3.user > 3000 && !W3.ptrs.size) W3.yawT += dt * .06; } // the kingdom slowly turns
@@ -3871,6 +3872,7 @@ const HOST_POSES = { // per arm: [raise sideways, raise forward, elbow bend, wri
 };
 function addHost(W, x, z) {
   if (W.mini) return;
+  if (HALLOWEEN) { if (COUNT_MODEL.state === 'ready') return addModelHost(W, x, z); loadCountModel(); } // the rigged Count, once loaded
   const kind = HALLOWEEN ? 'count' : 'king', cnt = kind === 'count';
   const root = group(W.scene, x, 0, z), body = group(root), m = (k, c, o) => W.mat('host' + k, c, o);
   root.scale.setScalar(W.kingdom ? 2 : 1.12); // bigger on the Kingdom map, where the camera is far away
@@ -3971,7 +3973,7 @@ function addHost(W, x, z) {
   root.traverse(o => { if (o.isMesh && o.material !== W.mats.hostlining) o.castShadow = true; });
   const shadow = mesh(W.scene, new THREE.CircleGeometry(.9, 24), new THREE.MeshBasicMaterial({ map: TEX.glow('rgba(0,0,0,.45)'), transparent: true, depthWrite: false }), x, .03, z, { rx: -Math.PI / 2, cast: false, recv: false });
   W.host = { kind, root, body, head, arms, eyes, arcs, brows, mouths, fangs, shadow, mood: '', x, z, yaw: 0, nod: 0, tilt: 0, brow: 0 };
-  W.ticks.push((now, dt) => {
+  W.host.tick = (now, dt) => {
     const h = W.host, P = (HOST_POSES[kind][h.mood] || HOST_POSES[kind].idle), k = 1 - Math.exp(-dt * 7);
     for (const a of h.arms) {
       const t = a.sd > 0 ? P.r : P.l;
@@ -3996,8 +3998,128 @@ function addHost(W, x, z) {
     const bt = P.face === 'shock' || P.face === 'sad' ? -.3 : P.face === 'sly' ? .22 : P.face === 'grin' || P.face === 'laugh' ? .12 : 0;
     h.brow += (bt - h.brow) * k; h.brows.forEach((b, i) => { const s = i ? 1 : -1; b.rotation.z = s * h.brow; b.position.y = .18 + (P.face === 'shock' ? .05 : 0); });
     if (W.hostCape) W.hostCape.rotation.x = Math.sin(now / 900) * .025 + (h.mood === 'cheer' ? .05 : 0);
-  });
+  };
+  W.ticks.push(W.host.tick);
 }
+// ---------- the rigged Count (art/count.glb + art/count.jpg, converted from the Meshy FBX), animated through his skeleton
+const COUNT_MODEL = { state: 'idle', scene: null, tex: null, rest: null }, SHARED3D = new WeakSet(); // assets reused by every area: never disposed
+function loadCountModel() {
+  if (COUNT_MODEL.state !== 'idle' || !THREE.GLTFLoader || !THREE.SkeletonUtils) return;
+  COUNT_MODEL.state = 'loading';
+  const done = ok => {
+    COUNT_MODEL.state = ok ? 'ready' : 'failed';
+    const W = W3.world; // swap him into the area that's open right now
+    if (ok && W && W.host && W.host.kind === 'count' && !W.host.model && HALLOWEEN) { replaceHost(W); try { W3.r.compile(W.scene, W3.cam); } catch (e) { /* best effort */ } }
+  };
+  let model = null, tex = null;
+  const check = () => { if (model && tex) { COUNT_MODEL.scene = model; COUNT_MODEL.tex = tex; COUNT_MODEL.rest = countRest(model); done(true); } };
+  new THREE.GLTFLoader().load('art/count.glb', g => { model = g.scene; check(); }, undefined, () => done(false));
+  new THREE.TextureLoader().load('art/count.jpg', t => { t.encoding = THREE.sRGBEncoding; t.flipY = true; t.anisotropy = 8; SHARED3D.add(t); tex = t; check(); }, undefined, () => done(false));
+}
+// The skeleton's rest pose in model space: each bone's joint position and rotation, and its parent.
+function countRest(scene) {
+  scene.updateMatrixWorld(true);
+  const R = {}, p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+  scene.traverse(b => { if (!b.isBone) return; b.matrixWorld.decompose(p, q, s); const pq = new THREE.Quaternion(); b.parent.matrixWorld.decompose(new THREE.Vector3(), pq, new THREE.Vector3());
+    R[b.name] = { pos: p.clone(), q: q.clone(), local: b.quaternion.clone(), parent: b.parent.isBone ? b.parent.name : null, parentQ: pq }; });
+  const len = (a, b) => R[a].pos.distanceTo(R[b].pos);
+  R.lenUpper = (len('LeftArm', 'LeftForeArm') + len('RightArm', 'RightForeArm')) / 2;
+  R.lenFore = (len('LeftForeArm', 'LeftHand') + len('RightForeArm', 'RightHand')) / 2;
+  return R;
+}
+// Mood poses, in model space (centimetres; he faces +z, his left hand is +x): where each wrist goes, which way
+// the elbow points, which way the hand points, and how the head and spine move.
+const COUNT_RIG_POSES = {
+  idle: { R: [-27, 126, 30], Rp: [-1, -.6, -.2], Rh: [0, 1, .5], L: [25, 93, 12], Lp: [.3, 0, -1], head: [-.05, 0, -.08], lean: 0 },     // beckoning you closer
+  happy: { R: [-5, 121, 22], Rp: [-1, -.7, 0], Rh: [1, .3, .1], L: [25, 93, 12], Lp: [.3, 0, -1], head: [-.2, 0, .08], lean: -.06 },    // laughing, hand on his chest
+  worried: { R: [-15, 137, 13], Rp: [-1, -1, -.3], Rh: [.3, 1, .05], L: [15, 137, 13], Lp: [1, -1, -.3], Lh: [-.3, 1, .05], head: [.08, 0, 0], lean: .05 }, // hands on his cheeks
+  sad: { R: [-5, 101, 22], Rp: [-1, -.3, -.6], Rh: [.6, -1, .3], L: [5, 101, 22], Lp: [1, -.3, -.6], Lh: [-.6, -1, .3], head: [.32, 0, .1], lean: .1 },
+  cheer: { R: [-50, 168, 14], Rp: [-.4, -1, -.3], Rh: [-.2, 1, .2], L: [50, 168, 14], Lp: [.4, -1, -.3], Lh: [.2, 1, .2], head: [-.12, 0, 0], lean: -.05 }, // claws up
+};
+function addModelHost(W, x, z) {
+  const M = COUNT_MODEL, rig = THREE.SkeletonUtils.clone(M.scene), root = group(W.scene, x, 0, z), body = group(root);
+  const H = 3.5; rig.scale.setScalar((W.kingdom ? 2 : 1) * H / 170); body.add(rig);
+  const mat = new THREE.MeshStandardMaterial({ map: M.tex, roughness: .62, metalness: 0, skinning: true, envMapIntensity: .7 * W.envI });
+  const bones = {};
+  rig.traverse(o => {
+    if (o.isBone) bones[o.name] = o;
+    if (o.isMesh) { o.material = mat; o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; SHARED3D.add(o.geometry); }
+  });
+  const shadow = mesh(W.scene, new THREE.CircleGeometry(.9 * (W.kingdom ? 2 : 1), 24), new THREE.MeshBasicMaterial({ map: TEX.glow('rgba(0,0,0,.45)'), transparent: true, depthWrite: false }), x, .03, z, { rx: -Math.PI / 2, cast: false, recv: false });
+  const order = []; const visit = n => { order.push(n); rig.traverse(o => { if (o.isBone && o.parent === bones[n]) visit(o.name); }); };
+  visit('Hips');
+  const h = { kind: 'count', model: true, root, body, rig, bones, order, shadow, mood: '', x, z, yaw: 0, t: 0,
+    cur: { R: new THREE.Vector3(), L: new THREE.Vector3(), Rp: new THREE.Vector3(), Lp: new THREE.Vector3(), Rh: new THREE.Vector3(), Lh: new THREE.Vector3(), head: new THREE.Vector3(), lean: 0 }, init: false };
+  W.host = h; h.tick = (now, dt) => animateModelHost(h, now, dt); W.ticks.push(h.tick);
+  return h;
+}
+let _q, _v, _v2, _v3, _e; // scratch objects, made once THREE has loaded
+function animateModelHost(h, now, dt) {
+  if (!_q) { _q = new THREE.Quaternion(); _v = new THREE.Vector3(); _v2 = new THREE.Vector3(); _v3 = new THREE.Vector3(); _e = new THREE.Euler(); }
+  const R = COUNT_MODEL.rest, P = COUNT_RIG_POSES[h.mood] || COUNT_RIG_POSES.idle, k = h.init ? 1 - Math.exp(-dt * 6) : 1, c = h.cur; h.init = true;
+  // ease every target toward the current mood's pose
+  for (const key of ['R', 'L', 'Rp', 'Lp']) c[key].lerp(_v.fromArray(P[key]), k);
+  for (const key of ['Rh', 'Lh']) c[key].lerp(_v.fromArray(P[key] || [0, 0, 0]), k);
+  c.head.lerp(_v.fromArray(P.head), k); c.lean += (P.lean - c.lean) * k;
+  const D = {}, Wq = {}, pos = {};
+  const own = name => D[name] = new THREE.Quaternion();
+  // spine: breathing, a lean, and a chuckle when laughing
+  const breath = Math.sin(now / 650) * .025, laugh = h.mood === 'happy' ? Math.sin(now / 95) * .05 : 0, tremble = h.mood === 'worried' ? Math.sin(now / 33) * .015 : 0;
+  own('Hips').setFromEuler(_e.set(0, Math.sin(now / 2600) * .04, tremble));
+  own('Spine02').setFromEuler(_e.set(c.lean * .4 + breath * .3, 0, 0)).premultiply(D.Hips);
+  own('Spine01').setFromEuler(_e.set(c.lean * .3 + breath * .4 + laugh * .5, 0, 0)).premultiply(D.Spine02);
+  own('Spine').setFromEuler(_e.set(c.lean * .3 + breath * .3 + laugh, 0, 0)).premultiply(D.Spine01);
+  // head: the mood's nod and tilt, plus turning toward the camera
+  const cam = W3.cam.position, want = Math.max(-.8, Math.min(.8, Math.atan2(cam.x - h.x, cam.z - h.z)));
+  h.yaw += (want * .55 - h.yaw) * (1 - Math.exp(-dt * 3)); h.root.rotation.y = h.yaw;
+  const look = (want - h.yaw) * .8 + Math.sin(now / 2300) * .1;
+  own('neck').setFromEuler(_e.set(c.head.x * .4, look * .4, c.head.z * .4)).premultiply(D.Spine);
+  own('Head').setFromEuler(_e.set(c.head.x * .6 + laugh * .6, look * .6, c.head.z * .6)).premultiply(D.neck);
+  // forward kinematics for the spine so the arms start from where the shoulders really are
+  for (const n of h.order) {
+    const r = R[n], pd = r.parent ? D[r.parent] : null;
+    if (!D[n]) D[n] = pd ? pd.clone() : new THREE.Quaternion();
+    Wq[n] = D[n].clone().multiply(r.q);
+    pos[n] = r.parent ? pos[r.parent].clone().add(_v.copy(r.pos).sub(R[r.parent].pos).applyQuaternion(D[r.parent])) : r.pos.clone();
+    if (n === 'LeftShoulder' || n === 'RightShoulder') { // two-bone IK for each arm
+      const side = n[0], arm = side === 'L' ? 'LeftArm' : 'RightArm', fore = side === 'L' ? 'LeftForeArm' : 'RightForeArm', hand = side === 'L' ? 'LeftHand' : 'RightHand', end = side === 'L' ? 'LeftHand_End' : 'RightHand_End';
+      const S = pos[n].clone().add(_v.copy(R[arm].pos).sub(R[n].pos).applyQuaternion(D[n]));
+      const T = c[side].clone(); let wob = 0;
+      if (h.mood === 'idle' && side === 'R') wob = Math.sin(now / 240);                                    // the beckoning curl
+      if (h.mood === 'cheer') T.y += Math.sin(now / 150 + (side === 'L' ? 1 : 0)) * 3;
+      const L1 = R.lenUpper, L2 = R.lenFore, toT = T.clone().sub(S), d = Math.min(toT.length(), (L1 + L2) * .995), dir = toT.normalize();
+      const a = (L1 * L1 - L2 * L2 + d * d) / (2 * d), hh = Math.sqrt(Math.max(0, L1 * L1 - a * a));
+      const pole = c[side + 'p'].clone().normalize(), pv = pole.sub(dir.clone().multiplyScalar(pole.dot(dir))).normalize();
+      const E = S.clone().add(dir.clone().multiplyScalar(a)).add(pv.multiplyScalar(hh)), Wr = S.clone().add(dir.clone().multiplyScalar(d));
+      const restUp = _v2.copy(R[fore].pos).sub(R[arm].pos).normalize(), restFo = _v3.copy(R[hand].pos).sub(R[fore].pos).normalize();
+      D[arm] = new THREE.Quaternion().setFromUnitVectors(restUp, E.clone().sub(S).normalize());
+      const curFo = restFo.clone().applyQuaternion(D[arm]);
+      D[fore] = new THREE.Quaternion().setFromUnitVectors(curFo, Wr.clone().sub(E).normalize()).multiply(D[arm]);
+      // the hand points where the pose says (or carries on from the forearm), with a curl for beckoning
+      const hd = c[side + 'h'], restHand = R[end] ? R[end].pos.clone().sub(R[hand].pos).normalize() : restFo.clone();
+      D[hand] = D[fore].clone();
+      if (hd.lengthSq() > .01) { const curH = restHand.clone().applyQuaternion(D[fore]); D[hand] = new THREE.Quaternion().setFromUnitVectors(curH, hd.clone().normalize()).multiply(D[fore]); }
+      if (wob) D[hand] = new THREE.Quaternion().setFromAxisAngle(_v.set(1, 0, 0), -.45 - wob * .45).multiply(D[hand]);
+    }
+  }
+  // write local rotations: local = parentWorld^-1 * world
+  for (const n of h.order) {
+    const r = R[n], b = h.bones[n], pw = r.parent ? Wq[r.parent] : r.parentQ;
+    b.quaternion.copy(_q.copy(pw).invert().multiply(Wq[n]));
+  }
+  // the whole body: a bounce when cheering, a shiver when worried
+  const jump = h.mood === 'cheer' ? Math.abs(Math.sin(now / 170)) * .25 : 0;
+  h.body.position.y = jump; h.shadow.scale.setScalar(1 - jump * .9);
+}
+// Swap whichever host an area has for the one that should be there now (the rigged Count once he has loaded).
+function replaceHost(W) {
+  const old = W.host; if (!old) return;
+  W.scene.remove(old.root); if (old.shadow) W.scene.remove(old.shadow);
+  const i = W.ticks.indexOf(old.tick); if (i >= 0) W.ticks.splice(i, 1);
+  W.host = null; addHost(W, old.x, old.z); const mood = old.mood; W.host.mood = ''; setHostMood();
+  if (!W.host.mood && mood) W.host.mood = mood;
+}
+
 function ermineTex() { // white fur with little black tails
   return canvasTex(128, 128, (g, w) => { g.fillStyle = '#fbfaf6'; g.fillRect(0, 0, w, w); for (let i = 0; i < 1500; i++) { g.fillStyle = `rgba(${Math.random() < .5 ? '200,195,190' : '255,255,255'},.4)`; g.fillRect(Math.random() * w, Math.random() * w, 1, 3); }
     g.fillStyle = '#151018'; for (let y = 16; y < w; y += 32) for (let x = (y / 32 % 2) * 16 + 8; x < w; x += 32) { g.beginPath(); g.moveTo(x, y - 7); g.lineTo(x + 3, y + 6); g.lineTo(x - 3, y + 6); g.fill(); } }, [3, 3], 'ermine');
@@ -4009,6 +4131,7 @@ function setHostMood() {
   const mood = (viewKingdom ? done.every(Boolean) : areaDone(viewArea)) ? 'cheer' : n ? (h.kind === 'count' && n % 2 ? 'idle' : 'happy') : 'worried';
   if (h.mood === mood) return;
   h.mood = mood;
+  if (h.model) return; // the rigged Count shows his mood with his whole body
   const face = HOST_POSES[h.kind][mood].face;
   h.eyes.visible = !(face === 'laugh' || face === 'grin' || (h.kind === 'king' && face === 'smile')); h.arcs.visible = !h.eyes.visible;
   h.mouths.smile.visible = face === 'smile' || face === 'sly' || face === 'grin'; h.mouths.open.visible = face === 'shock' || face === 'laugh'; h.mouths.frown.visible = face === 'sad';
