@@ -4001,7 +4001,7 @@ function addHost(W, x, z) {
   };
   W.ticks.push(W.host.tick);
 }
-// ---------- the rigged Count (art/count.glb + art/count.jpg, converted from the Meshy FBX), animated through his skeleton
+// ---------- the rigged Count (art/count.json, glTF with its data embedded, + art/count.jpg, converted from the Meshy FBX), animated through his skeleton
 const COUNT_MODEL = { state: 'idle', scene: null, tex: null, rest: null }, SHARED3D = new WeakSet(); // assets reused by every area: never disposed
 function loadCountModel() {
   if (COUNT_MODEL.state !== 'idle' || !THREE.GLTFLoader || !THREE.SkeletonUtils) return;
@@ -4013,7 +4013,7 @@ function loadCountModel() {
   };
   let model = null, tex = null;
   const check = () => { if (model && tex) { COUNT_MODEL.scene = model; COUNT_MODEL.tex = tex; COUNT_MODEL.rest = countRest(model); done(true); } };
-  new THREE.GLTFLoader().load('art/count.glb', g => { model = g.scene; check(); }, undefined, () => done(false));
+  new THREE.GLTFLoader().load('art/count.json', g => { model = g.scene; check(); }, undefined, () => done(false));
   new THREE.TextureLoader().load('art/count.jpg', t => { t.encoding = THREE.sRGBEncoding; t.flipY = true; t.anisotropy = 8; SHARED3D.add(t); tex = t; check(); }, undefined, () => done(false));
 }
 // The skeleton's rest pose in model space: each bone's joint position and rotation, and its parent.

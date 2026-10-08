@@ -65,7 +65,7 @@ Bat Belfry on Halloween) with six upgrades each, built in `throneRoom3D()`, `gar
 Unbuilt upgrades show as glowing blueprints; building one drops it in with a flash, a shockwave, dust and sparkles.
 The King (or the Count on Halloween) is a real 3D character in every area (`addHost()`): posable arms for each mood
 (`HOST_POSES`), blinking, breathing, real shadows, and he turns to face the camera.
-On Halloween the Count is the rigged Meshy model (`art/count.glb` + `art/count.jpg`, converted from `art/count-source.fbx`
+On Halloween the Count is the rigged Meshy model (`art/count.json`, a glTF with its data embedded so it can be served as JSON, + `art/count.jpg`, converted from `art/count-source.fbx`
 with the bones unchanged). He is animated through his skeleton in code (`animateModelHost()`): two-bone arm IK places
 his hands for each mood (`COUNT_RIG_POSES`, model space in cm, +z forward), with breathing, a head that follows the
 camera, a beckoning curl, a chuckle and a cheering bounce. If the files can't load, the built-in 3D Count is used.
